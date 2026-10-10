@@ -1,0 +1,6 @@
+PySide6>=6.5.0
+PyMuPDF>=1.23.0
+pillow>=10.0.0
+# Episode2（路线 B）：后端契约用 numpy 缓冲做零拷贝跨语言传参。
+# 体积预算：numpy 轮子约 +15 MB（ROADMAP §11.1 E10 把它列为路线 B 的前置条件）。
+numpy>=1.26

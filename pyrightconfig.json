@@ -1,0 +1,37 @@
+{
+  "//": "A7：Pyright 配置。目标 = `pyright` 无 error（warning 允许），见 ROADMAP §11。",
+  "include": ["src", "main.py", "conftest.py", "tests"],
+  "exclude": [".venv", "build", "dist", "build_new", "dist_new", "_acl-recovery", "_baseline_smoke"],
+  "pythonVersion": "3.12",
+  "pythonPlatform": "Windows",
+  "typeCheckingMode": "basic",
+  "venvPath": ".",
+  "venv": ".venv",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownArgumentType": "none",
+  "reportUnknownVariableType": "none",
+  "reportUnknownParameterType": "none",
+  "reportMissingParameterType": "none",
+  "reportUnusedImport": "none",
+  "reportUnusedVariable": "none",
+  "reportPrivateUsage": "none",
+  "reportUnnecessaryIsInstance": "none",
+  "reportGeneralTypeIssues": "warning",
+  "reportOptionalMemberAccess": "warning",
+  "reportAttributeAccessIssue": "warning",
+  "reportCallIssue": "warning",
+  "reportArgumentType": "warning",
+  "reportAssignmentType": "warning",
+  "reportReturnType": "warning",
+  "reportOperatorIssue": "warning",
+  "reportIndexIssue": "warning",
+  "reportTypedDictNotRequiredAccess": "none",
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "extraPaths": ["."]
+    }
+  ]
+}

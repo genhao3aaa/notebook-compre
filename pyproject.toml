@@ -1,0 +1,33 @@
+# 工具链配置（代码本身不依赖本文件）。
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# pytest 默认把缓存写到 .pytest_cache；在部分受限环境（目录 ACL 异常、临时目录只读）
+# 下该目录不可写，会让 pytest 反复告警。统一放到 build/ 下（已被 .gitignore 忽略）。
+cache_dir = "build/.pytest_cache"
+
+# --------------------------------------------------------------------- #
+# A7：静态检查
+# --------------------------------------------------------------------- #
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [".venv", "build", "dist", "build_new", "dist_new", "_acl-recovery"]
+
+[tool.ruff.lint]
+# 先用「确定性高、误报低」的一组规则：pycodestyle 错误 + pyflakes。
+# 刻意不开 isort（I）：本项目有「先插 sys.path 再 import」的写法（conftest/env_compat），
+# 自动重排 import 有破坏启动顺序的风险，收益也不大。
+select = ["E4", "E7", "E9", "F", "W"]
+ignore = [
+    "E501",   # 行长：大量中文注释与说明，按 120 列硬断反而更难读
+    "E402",   # 模块级 import 不在文件顶部：conftest / smoke 脚本需要先改 sys.path
+    "E741",   # 单字母变量名（如 l）在几何代码里可读性可接受
+    "F401",   # 未使用的 import：__init__.py 的再导出与可选依赖探测会用到
+]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试与基准脚本：允许 assert 之外的宽松写法
+"tests/**" = ["F841", "F811"]
+"smoke_*.py" = ["F841"]
+"probe_*.py" = ["F841"]
