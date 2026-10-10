@@ -31,7 +31,11 @@ jobs:
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest ruff pyright
+          # 锁定静态检查工具版本：ruff / pyright 升级会引入新的检查项或更严格的类型
+          # 推断，可能让原本通过的代码突然变红（2026-10-10 首次 CI 失败即因新版
+          # pyright 报出 reportOptionalSubscript）。下面是本地验收通过的版本组合。
+          # 升级这两者时，请先本地跑 `ruff check` + `pyright` 确认仍是 0 error。
+          pip install -r requirements.txt pytest "ruff==0.16.9" "pyright==1.1.414"
 
       - name: ruff（静态检查）
         run: ruff check
