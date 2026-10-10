@@ -1,0 +1,135 @@
+{
+  "backend": "rust",
+  "rust_available": true,
+  "cases": [
+    {
+      "strokes": 300,
+      "simplify": {
+        "strokes": 300,
+        "same_kept_points": 300,
+        "ratio": 1.0
+      },
+      "hit_test": {
+        "queries": 40,
+        "reference_hits": 93,
+        "missing": 0,
+        "extra": 0
+      },
+      "rasterize": {
+        "coverage_python_pct": 9.513,
+        "coverage_rust_pct": 9.317,
+        "coverage_delta_pct": 0.196,
+        "alpha_mean_diff": 0.599,
+        "ink_pixels": 16408,
+        "ink_rgb_mean_diff": 2.192,
+        "coverage_ok": true,
+        "diff_ok": true
+      },
+      "timing": {
+        "simplify_ms": {
+          "python": 39.445,
+          "rust": 0.644
+        },
+        "hit_test_ms": {
+          "python": 0.144,
+          "rust": 0.019
+        },
+        "rasterize_ms": {
+          "python": 25.28,
+          "rust": 2.87
+        },
+        "speedup": {
+          "simplify_ms": 61.25,
+          "hit_test_ms": 7.58,
+          "rasterize_ms": 8.81
+        }
+      }
+    },
+    {
+      "strokes": 1000,
+      "simplify": {
+        "strokes": 1000,
+        "same_kept_points": 1000,
+        "ratio": 1.0
+      },
+      "hit_test": {
+        "queries": 40,
+        "reference_hits": 303,
+        "missing": 0,
+        "extra": 0
+      },
+      "rasterize": {
+        "coverage_python_pct": 28.896,
+        "coverage_rust_pct": 28.352,
+        "coverage_delta_pct": 0.544,
+        "alpha_mean_diff": 1.702,
+        "ink_pixels": 49948,
+        "ink_rgb_mean_diff": 1.95,
+        "coverage_ok": true,
+        "diff_ok": true
+      },
+      "timing": {
+        "simplify_ms": {
+          "python": 151.338,
+          "rust": 2.572
+        },
+        "hit_test_ms": {
+          "python": 0.488,
+          "rust": 0.086
+        },
+        "rasterize_ms": {
+          "python": 85.17,
+          "rust": 7.73
+        },
+        "speedup": {
+          "simplify_ms": 58.84,
+          "hit_test_ms": 5.67,
+          "rasterize_ms": 11.02
+        }
+      }
+    },
+    {
+      "strokes": 5000,
+      "simplify": {
+        "strokes": 5000,
+        "same_kept_points": 5000,
+        "ratio": 1.0
+      },
+      "hit_test": {
+        "queries": 40,
+        "reference_hits": 1416,
+        "missing": 0,
+        "extra": 0
+      },
+      "rasterize": {
+        "coverage_python_pct": 72.66,
+        "coverage_rust_pct": 72.187,
+        "coverage_delta_pct": 0.474,
+        "alpha_mean_diff": 2.783,
+        "ink_pixels": 127291,
+        "ink_rgb_mean_diff": 1.113,
+        "coverage_ok": true,
+        "diff_ok": true
+      },
+      "timing": {
+        "simplify_ms": {
+          "python": 941.309,
+          "rust": 16.226
+        },
+        "hit_test_ms": {
+          "python": 2.611,
+          "rust": 0.457
+        },
+        "rasterize_ms": {
+          "python": 414.57,
+          "rust": 35.44
+        },
+        "speedup": {
+          "simplify_ms": 58.01,
+          "hit_test_ms": 5.71,
+          "rasterize_ms": 11.7
+        }
+      }
+    }
+  ]
+}

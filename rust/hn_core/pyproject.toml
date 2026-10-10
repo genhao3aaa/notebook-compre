@@ -1,0 +1,18 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "hn-core"
+version = "0.1.0"
+description = "手写笔记本 Episode2 的 Rust 核心（路线 B）"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[tool.maturin]
+# 扩展模块名固定为 `hn_core`（与 src/render/backend.py 里的 import 对应）
+module-name = "hn_core"
+features = ["pyo3/extension-module"]

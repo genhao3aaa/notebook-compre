@@ -1,0 +1,25 @@
+[package]
+name = "hn_core"
+version = "0.1.0"
+edition = "2021"
+description = "手写笔记本 Episode2（路线 B）Rust 核心：光栅化 / 简化 / 命中测试"
+license = "MIT"
+
+[lib]
+name = "hn_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# PyO3 + numpy：与 CPython 3.10+ 的 abi3 接口，numpy 侧零拷贝读写
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py310"] }
+numpy = "0.23"
+# 纯 Rust 2D 光栅化（不依赖 Qt / 不依赖系统图形库）
+tiny-skia = "0.11"
+# 笔画包围盒 R 树：橡皮命中测试
+rstar = "0.12"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

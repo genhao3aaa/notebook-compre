@@ -1,0 +1,37 @@
+# exe 的版本资源（PyInstaller 的 EXE(version=...) 读取本文件）
+#
+# 为什么需要它
+# ------------
+# 未签名的 exe 在「属性 → 详细信息」里全是空白，看起来就像来路不明的程序；
+# SmartScreen 的「未知发布者」提示也拿不到任何产品信息。这里补上产品/版本/说明，
+# 至少让文件本身是自解释的（真正消除提示仍需代码签名，见 sign_dist.py）。
+#
+# 版本号跟 README 的功能版本保持一致（v5.2；5.2.1 = 鼠标批注修复版；
+# 5.2.2 = 2026-10-01 保存位置兜底链 + 设置后端 INI 兜底 + 阅读位置回归）。
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(5, 2, 2, 0),
+    prodvers=(5, 2, 2, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable('080404B0', [
+        StringStruct('CompanyName', 'Handwriting Notebook Project'),
+        StringStruct('FileDescription', '手写笔记本与 PDF 批注'),
+        StringStruct('FileVersion', '5.2.2.0'),
+        StringStruct('InternalName', 'HandwritingNotebook'),
+        StringStruct('LegalCopyright', ''),
+        StringStruct('OriginalFilename', '手写笔记本与PDF批注.exe'),
+        StringStruct('ProductName', '手写笔记本与 PDF 批注'),
+        StringStruct('ProductVersion', '5.2.2.0')
+      ])
+    ]),
+    VarFileInfo([VarStruct('Translation', [0x0804, 1200])])
+  ]
+)
