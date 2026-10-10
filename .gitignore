@@ -1,0 +1,39 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ---- 虚拟环境 ----
+.venv/
+venv/
+env/
+
+# ---- PyInstaller 打包产物 / 中间目录 ----
+build/
+build_*/
+dist/
+dist_*/
+dist_rust/
+手写笔记本与PDF批注.spec
+
+# ---- Rust 构建产物 ----
+rust/target/
+target/
+*.rlib
+*.rmeta
+*.pdb
+*.d
+
+# ---- 缓存与日志 ----
+*.log
+
+# ---- 运行时生成的数据文件 ----
+*.annot
+*.note
+
+# ---- 基准临时结果（保留 bench_backend_result.json 作为证据）----
+bench_*.json
+!bench_backend_result.json
