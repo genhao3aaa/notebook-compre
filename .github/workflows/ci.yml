@@ -1,0 +1,103 @@
+# A7：CI（pytest + 静态检查 + 基准 + 打包冒烟）
+#
+# 说明：本程序只支持 Windows（Qt 触控笔 / Windows 反馈 API），所以 runner 用 windows-latest。
+# 打包冒烟单独一个 job：PyInstaller 构建要几分钟，放在主测试之后的第二阶段。
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  QT_QPA_PLATFORM: offscreen
+  PYTHONIOENCODING: utf-8
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  test:
+    name: 测试与静态检查
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest ruff pyright
+
+      - name: ruff（静态检查）
+        run: ruff check
+
+      - name: pyright（类型检查：允许 warning、不允许 error）
+        run: pyright
+
+      - name: pytest（全量回归 + 性能预算）
+        run: pytest -q
+
+      - name: 基准（存档 JSON）
+        run: |
+          python tests/benchmarks/bench_canvas_rebuild.py --strokes 100,500,1000 --dpr 1.0 --json > bench_rebuild.json
+          python tests/benchmarks/bench_incremental.py --strokes 1000 --layout realistic --json > bench_incremental.json
+          python tests/benchmarks/bench_storage.py --json > bench_storage.json
+          python tests/benchmarks/bench_startup.py --repeat 3 --json > bench_startup.json
+
+      - name: 源码自检（与打包后的 --selftest 同一套逻辑）
+        run: python main.py --selftest "${{ runner.temp }}\\hn-ci"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmarks
+          path: bench_*.json
+          if-no-files-found: warn
+
+  package:
+    name: 打包与成品冒烟
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: 打包（A5 白名单裁剪）
+        run: pyinstaller build.spec
+
+      # 预算口径：整份 dist（含 _internal 里的 Qt / PyMuPDF / numpy）。
+      # 2026-10-01 重新打包实测 142.0 MB（245 文件）——numpy 与 PyMuPDF 被带上后
+      # 早先 113 MB 的值已经过时，120 MB 的闸门会把正常构建卡死，所以按实测
+      # 上调到 150 MB（留 ~6% 余量，仍能拦住「误把 WebEngine/translations 收进来」）。
+      - name: 体积预算（< 150 MB）
+        shell: pwsh
+        run: |
+          $mb = [math]::Round(((Get-ChildItem dist -Recurse -File | Measure-Object Length -Sum).Sum / 1MB), 1)
+          Write-Host "dist = $mb MB"
+          if ($mb -gt 150) { throw "打包体积 $mb MB 超过预算 150 MB" }
+
+      - name: 成品自检（打开 PDF / 手写 / 存批注 / 导出 / 存笔记）
+        shell: pwsh
+        run: |
+          $exe = "dist\手写笔记本与PDF批注\手写笔记本与PDF批注.exe"
+          $work = Join-Path $env:RUNNER_TEMP "hn-check"
+          $p = Start-Process -FilePath $exe -ArgumentList @("--selftest", $work) -PassThru
+          if (-not $p.WaitForExit(240000)) { $p.Kill(); throw "成品自检超时" }
+          if ($p.ExitCode -ne 0) { throw "成品自检失败（退出码 $($p.ExitCode)）" }
+          Get-Content (Get-ChildItem $work -Recurse -Filter selftest.log |
+            Sort-Object LastWriteTime | Select-Object -Last 1).FullName
