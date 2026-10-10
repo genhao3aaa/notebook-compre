@@ -110,7 +110,9 @@ def test_saved_beside_unwritable_pdf_still_readable(qapp, tmp_path, monkeypatch)
     doc.save(target)
     assert os.path.isfile(target)
 
-    back = AnnotDocument.load(annot_store.find_existing(pdf)[0])
+    found = annot_store.find_existing(pdf)
+    assert found is not None, "批注应能在兜底位置被找回"
+    back = AnnotDocument.load(found[0])
     assert len(back.pages[1].strokes) == 1
 
 
