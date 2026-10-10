@@ -12,3 +12,21 @@
 ```bash
 pip install maturin
 python build_rust.py
+```
+
+## 提交前自检
+
+```bash
+ruff check
+pyright
+pytest -q
+python main.py --selftest %TEMP%\hn-check
+```
+
+## 提交规范
+- 提交信息建议使用 Conventional Commits（`feat:` / `fix:` / `docs:` / `perf:` / `chore:`）。
+- 每个改动尽量单一主题、可独立回滚。
+- 新行为请附测试；性能改动请附基准数据。
+
+## 许可
+贡献即视为同意你的贡献以 AGPL-3.0 授权。
