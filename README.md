@@ -1,107 +1,128 @@
-# 手写笔记本与 PDF 批注程序（Episode2）
+# 手写笔记本与 PDF 批注程序
 
-> **这是 Episode2**：在 Episode1（`handwriting-notebook/`，已冻结备份）的 Qt 外壳里接入
-> **Rust 核心**（ROADMAP 路线 B）。新增内容与实测数据见 **[EPISODE2.md](EPISODE2.md)**：
-> `src/render/backend.py` 契约（`rasterize` / `simplify` / `hit_test`）、`rust/hn_core`（tiny-skia +
-> rstar + PyO3）、对拍基准与一键构建脚本 `build_rust.py`。
-> 桌面快捷方式**已指向 Episode2**（`手写笔记本与PDF批注.lnk` 用共享 venv 的 `pythonw.exe` 直接启动本目录源码版）；
-> Episode1 的 exe 与备份快捷方式仍可回退，见「已知限制」。
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078d4.svg)](#系统要求)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![Rust](https://img.shields.io/badge/rust-optional-orange.svg)](#rust-加速核心可选)
 
-一个运行在 **Windows 10 / 11** 上的桌面手写程序，使用 **PySide6 + PyMuPDF** 实现。
+一款运行在 **Windows 10 / 11** 上的桌面手写程序：新建手写笔记、打开 PDF 并直接在页面上批注。
+外壳使用 **PySide6**，PDF 引擎使用 **PyMuPDF**，可选接入 **Rust 渲染核心** 提升压感笔迹与命中测试性能。
 
-- 新建空白手写笔记（支持鼠标 / 数位板 / 触控笔压感）。
-- 打开 PDF，在页面上手写批注，批注与原文分离保存。
-- 笔记 / 批注可保存、再次打开、并导出为 PDF（批注烧录进页面）。
-
-> 性能/架构演进与「是否换语言」的方案存档见 [ROADMAP.md](ROADMAP.md)（含实测基线数据与勘误），
-> 复核报告见 [ROADMAP_REVIEW.md](ROADMAP_REVIEW.md)。**路线 A 正在实施**：P0 基准入库、A1 压感渲染已完成（见文末「性能（路线 A）」）。
+> A Windows desktop app for handwriting notes and PDF annotation, built with PySide6 + PyMuPDF,
+> with an optional Rust rendering core.
 
 ---
 
-## 功能概览
+## 目录
+
+- [功能特性](#功能特性)
+- [系统要求](#系统要求)
+- [安装](#安装)
+- [运行](#运行)
+- [使用说明](#使用说明)
+- [Rust 加速核心（可选）](#rust-加速核心可选)
+- [打包为可执行文件](#打包为可执行文件)
+- [测试](#测试)
+- [项目结构](#项目结构)
+- [设计原则](#设计原则)
+- [环境变量](#环境变量)
+- [已知限制](#已知限制)
+- [性能](#性能)
+- [贡献](#贡献)
+- [许可证](#许可证)
+
+---
+
+## 功能特性
 
 ### A. 空白手写笔记
+
 - 新建笔记：默认 A4 纵向，可选 **网格 / 横线 / 点阵** 背景。
-- **背景颜色**（v4）：8 种预设纸色（白 / 米黄 / 护眼绿 / 淡蓝 / 淡粉 / 浅灰 / 深灰 / 夜黑）+ 自定义取色；深色底上网格 / 横线自动变为浅色，缩略图与导出 PDF 同步生效。
+- **背景颜色**：8 种预设纸色（白 / 米黄 / 护眼绿 / 淡蓝 / 淡粉 / 浅灰 / 深灰 / 夜黑）+ 自定义取色；
+  深色底上网格 / 横线自动变为浅色，缩略图与导出 PDF 同步生效。
 - 多页管理：翻页、添加页、删除页、页码跳转。
 - 画笔工具：钢笔 / **荧光笔** / 橡皮擦，颜色、笔宽、撤销 / 重做、清空当前页。
-- **常用色快捷盘**（v5.1）：点工具栏色块直接给一屏常用色（钢笔 12 色 / 荧光笔 8 色半透明），**单击即换色**，键盘 `1`~`9` 也行；自动记住「最近使用」；完整调色板（取色器 / 色轮 / 十六进制 / 透明度）收在弹窗里的「更多颜色…」。
-- **荧光笔**（v4.1）：半透明等宽标记，颜色可自定义（默认琥珀黄，40% 不透明）；导出 PDF 时按半透明叠加，不会盖死原文。
+- **常用色快捷盘**：点工具栏色块弹出常用色（钢笔 12 色 / 荧光笔 8 色半透明），**单击即换色**，
+  键盘 `1`~`9` 也行；自动记住「最近使用」；完整调色板（取色器 / 色轮 / 十六进制 / 透明度）
+  收在弹窗里的「更多颜色…」。
 - 输入方式：鼠标拖拽书写；支持数位板 / 触控笔压感（自动识别 `tabletEvent`）。
 - 笔迹渲染：平滑曲线 + 抗锯齿；书写时增量绘制，单笔延迟低。
 - 画布操作：`Ctrl + 滚轮` 缩放；`空格` 或 `中键` 拖拽平移。
-- 保存：自定义 `.note` 格式（**v2 二进制容器**：magic + 元数据 + 列式点数据 + CRC32 + 原子写；
-  旧版 1.0/1.1 的 JSON 文件仍可直接打开；需要 JSON 时 `NoteDocument.save(path, version=1)`）。
+- 保存：自定义 `.note` 格式（**v2 二进制容器**：magic + 元数据 + 列式点数据 + CRC32 + 原子写）。
 
-### B. PDF 批注与阅读（v4 达到商用阅读器水平）
+### B. PDF 批注与阅读
+
 - 打开 PDF：按页渲染为高清图像显示。
 - **书签 / 目录**：侧边栏「目录」标签展示多级书签树，点击跳转；自动高亮当前页所在书签。
-- **全文搜索**：侧边栏「搜索」标签，后台线程检索不卡界面；结果列表显示页码与上下文，点击 / 上一个 / 下一个 跳转，命中处在页面上高亮，支持区分大小写与全词匹配。
-- **页码跳转**：页码框输入后回车跳转（不会边输入边跳页）、`Ctrl+G` 跳转对话框、`PgUp / PgDn / ← / → / Home / End` 键盘翻页。
-- **连续阅读 / 单页阅读**（v4.2）：工具栏最右侧的按钮或 `Ctrl+Shift+L` 切换。连续模式把整篇纵向排布、滚动阅读（多页同屏，页码/目录/搜索高亮自动跟随）；单页模式一次只看一页，翻页即换页。每份 PDF 的阅读模式会被记住。
-- **阅读进度自动恢复**（v4.2）：关掉再打开同一份 PDF，直接回到上次读到的那一页（连续模式还会恢复到相同的滚动位置）；文件被替换过则自动忽略旧进度。
-- **视图模式**：适应页面（`Ctrl+0`）/ 适应宽度（`Ctrl+Shift+9`，长文阅读常用）/ 实际大小 100%（`Ctrl+Shift+1`）。（v5 起 `Ctrl+1`~`Ctrl+9` 让位给「切换第 N 个标签」）
-- **页面旋转**：向左 / 向右旋转 90°（`Ctrl+Shift+←/→`），扫描横向文档必备；批注坐标始终存原始页面坐标，旋转不影响批注位置与导出。
+- **全文搜索**：侧边栏「搜索」标签，后台线程检索不卡界面；结果列表显示页码与上下文，
+  支持区分大小写与全词匹配。
+- **页码跳转**：页码框输入后回车跳转、`Ctrl+G` 跳转对话框、`PgUp / PgDn / ← / → / Home / End` 键盘翻页。
+- **连续阅读 / 单页阅读**：工具栏最右侧按钮或 `Ctrl+Shift+L` 切换。连续模式纵向排布整篇滚动阅读。
+- **阅读进度自动恢复**：关掉再打开同一份 PDF，直接回到上次读到的那一页。
+- **视图模式**：适应页面（`Ctrl+0`）/ 适应宽度（`Ctrl+Shift+9`）/ 实际大小 100%（`Ctrl+Shift+1`）。
+- **页面旋转**：向左 / 向右旋转 90°（`Ctrl+Shift+←/→`），批注坐标始终存原始页面坐标，旋转不影响批注位置与导出。
 - **文档信息 / 复制文本**：查看标题、作者、页数、加密状态；一键复制当前页文本（`Ctrl+Shift+C`）。
 - 批注层：手写批注叠加在 PDF 之上，与原文分离保存。
-- 导航：缩略图侧栏（随旋转同步）、页码跳转、缩放、平移。
-- 保存：默认保存为 PDF 同名的 `.annot` 文件（**v2 二进制容器** + PDF 的 MD5 校验；旧 JSON 文件兼容），
-  再次打开自动加载；写盘在后台线程完成，大文档不卡界面。
+- 保存：默认保存为 PDF 同名的 `.annot` 文件（**v2 二进制容器** + PDF 的 MD5 校验），再次打开自动加载；
+  写盘在后台线程完成，大文档不卡界面。
 - 导出：将带批注的 PDF 导出为新 PDF，批注烧录到页面（基于页面坐标，位置精确）。
 - 性能：PDF 页面 **异步渲染** + **渲染缓存**，避免 UI 卡顿。
 - 坐标系统：批注坐标基于 **PDF points**，显示按缩放因子映射，导出无需换算。
 
-### C. 浏览器式多标签（v5）
-- **任意混开**：多个笔记、多个 PDF、笔记与 PDF 混合，全部可以同时打开，像浏览器开网页一样。
-- **切换即时**：每个标签独占一个画布，切换只是把某一页显示出来（O(1)）——PDF 不重新解析，缩略图不重排，**页码、缩放、滚动位置、撤销栈原样保留**，切回来还是刚才那一屏。
+### C. 浏览器式多标签
+
+- **任意混开**：多个笔记、多个 PDF、笔记与 PDF 混合，全部可同时打开。
+- **切换即时**：每个标签独占一个画布，切换只是把某一页显示出来（O(1)）——PDF 不重新解析，
+  缩略图不重排，**页码、缩放、滚动位置、撤销栈原样保留**。
 - **状态完全隔离**：A 标签的笔画、页码、缩放、背景色、未保存标记，绝不会串到 B 标签。
-- **同一文件不重复开**：已经打开的 PDF / 笔记再点一次，会切到已有标签而不是开成两份（避免同一份 PDF 的批注被两个标签互相覆盖）。
-- **标签可拖成独立窗口**（v5.2）：把标签拖出标签栏 → 新窗口；拖到另一个窗口的标签栏 → 合并过去。文档不复制，撤销栈与阅读进度一起搬走。
-- **独立进度**：每个标签各自记住读到第几页；后台标签的搜索结果回来后只落到它自己身上，不会抢当前标签的界面。
+- **同一文件不重复开**：已经打开的 PDF / 笔记再点一次，会切到已有标签而不是开成两份。
+- **标签可拖成独立窗口**：把标签拖出标签栏 → 新窗口；拖到另一个窗口的标签栏 → 合并过去。
 - **会话恢复**：退出时记住打开的标签，下次启动自动恢复（文件被删则跳过，不会卡住启动）。
 
-### D. 现代 Agent 风格 UI
-- **左侧可折叠侧边栏（默认 248px，可拖拽 180~460px）**：新建笔记按钮、最近文件列表、页面缩略图（打开 PDF 时标题自动变为「PDF 页面」）。点左上角菜单按钮可收起 / 展开；窗口窄于 940px 时自动收起、变宽自动恢复；宽度会被记住。
-- **响应式顶部工具栏（约 46px）**：文件操作、撤销 / 重做、钢笔 / 橡皮 / 荧光笔、颜色（常用色快捷盘）、笔宽滑块、翻页、缩放与适应页面、阅读模式、背景、旋转、搜索、主题。按钮均带图标 + 悬浮提示；**窗口变窄时优先级最低的按钮自动收进最右端的「»」溢出菜单**（Qt 原生机制，滑块 / 下拉框进弹出菜单后依然可用），核心按钮永不消失。
-- **工具栏下方的标签栏（浏览器式）**：每个标签都有类型图标（笔记 / PDF）、标题、未保存星号 `*` 与**常显的 × 关闭按钮**；可拖拽重排、中键关闭、双击空白处新建、标签太多时横向滚动，右侧 `＋` 一键新建；右键菜单含「关闭 / 关闭其他 / 关闭左侧 / 关闭右侧 / 重新打开 / 复制路径」。
-- **中央画布** + **底部状态栏**（工具 / 页码 / 缩放 / 坐标）。
-- **画布滑动条（v5.3）**：画布**右侧竖条**与**下侧横条**（网页式外观，内容装得下就自动隐藏）。拖滑块 / 点轨道翻屏 / 滚轮照样滚；视口会为它让出占位，页面不会被条压住；`↑` / `↓` 一次微调 48px。详见文末 v5.3 小节。
-- **浅色 / 深色主题**：默认浅色，点击主题按钮一键切换（样式由 `src/ui/theme.py` 的 QSS 统一管理，与逻辑分离）。
-- 扁平化、圆角、柔和中性色风格；支持 150% / 200% 高 DPI 缩放清晰。
-- 菜单：文件（新建 / 打开 / 保存 / 另存为 / 导出 / 最近文件）、编辑（撤销 / 重做 / 清空）、**标签**（新建 / 关闭 / 关闭其他 / 切换 / 恢复关闭的标签）、视图（缩放 / 适应页面 / 切换主题）、帮助。
-- 快捷键：`Ctrl+N` 新建、`Ctrl+O` 打开、`Ctrl+S` 保存、`Ctrl+Z` 撤销、`Ctrl+Y` 重做、`Ctrl+E` 导出、`Ctrl+0` 适应页面、`Ctrl+Shift+9` 适应宽度、`Ctrl+Shift+1` 实际大小、`Ctrl+Shift+L` 连续/单页阅读、`Ctrl+K` 清空当前页、`↑` / `↓` 纵向微调 48px（v5.3）、`Shift+滚轮` 横向平移。
-- **标签快捷键**：`Ctrl+T` 新建、`Ctrl+W` 关闭、`Ctrl+Tab` / `Ctrl+Shift+Tab` 上一个 / 下一个、`Ctrl+1`~`Ctrl+8` 直达第 N 个、`Ctrl+9` 最后一个、`Ctrl+Shift+T` 恢复刚关闭的标签。
+### D. 界面
+
+- **左侧可折叠侧边栏**（默认 248px，可拖拽 180~460px）：新建笔记、最近文件、页面缩略图。
+- **响应式顶部工具栏**（约 46px）：窗口变窄时优先级最低的按钮自动收进最右端的「»」溢出菜单。
+- **工具栏下方的标签栏**：每个标签有类型图标、标题、未保存星号 `*` 与常显的 × 关闭按钮。
+- **浅色 / 深色主题**：一键切换，样式由 `src/ui/theme.py` 的 QSS 统一管理。
+- 支持 150% / 200% 高 DPI 缩放。
 - 错误提示：文件损坏 / PDF 无法打开 / 保存失败等均有弹窗，不会崩溃。
-- **调试**：设置环境变量 `HN_DEBUG=1` 后运行，鼠标 / 触控笔的按下 / 移动 / 释放会在控制台打印坐标，便于排查书写问题。
 
 ---
 
-## 安装依赖
+## 系统要求
 
-要求 **Python 3.10+**（本项目在 3.12 / 3.13 上验证；打包出的 exe 自带运行时，无需 Python）。
+| 项目 | 要求 |
+|---|---|
+| 操作系统 | **Windows 10 / 11**（依赖 Qt 触控笔事件与 Windows 反馈 API，暂不支持其他平台） |
+| Python | **3.10+**（开发与 CI 使用 3.12） |
+| Rust | 可选，仅构建加速核心时需要 |
+
+---
+
+## 安装
 
 ```bash
-cd handwriting-notebook
+git clone https://github.com/genhao3aaa/notebook-compre.git
+cd notebook-compre
 python -m venv .venv
-.venv\Scripts\activate        # Windows
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-> 也可以直接用 [uv](https://docs.astral.sh/uv/)（更快）：
-> `uv venv .venv --python 3.12 && uv pip install --python .venv\Scripts\python.exe -r requirements.txt pytest pyinstaller`
->
-> 开发/测试还需要 `pytest`；重新打包还需要 `pyinstaller`；运行 `cleanup_old_versions.py` 清理历史构建还需要 `send2trash`。
-
-`requirements.txt` 内容：
+`requirements.txt`：
 
 ```
 PySide6>=6.5.0
 PyMuPDF>=1.23.0
 pillow>=10.0.0
+numpy>=1.26
 ```
 
-> 若安装 PySide6 较慢，可改用国内镜像：
-> `pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt`
+> 也可以直接用 [uv](https://docs.astral.sh/uv/)（更快）：
+> `uv venv .venv --python 3.12 && uv pip install --python .venv\Scripts\python.exe -r requirements.txt`
+>
+> 国内网络安装慢时可加镜像：`pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt`
 
 ---
 
@@ -113,21 +134,6 @@ python main.py
 
 首次启动会进入一个空白 A4 笔记页，即可开始手写。
 
-Episode2 用共享 venv（`handwriting-notebook\.venv`）运行，仓库里自带启动器 `episode2\run_episode2.cmd`，三种用法：
-
-| 命令 | 作用 |
-| --- | --- |
-| 双击 `run_episode2.cmd` | 启动 Episode2（`pythonw.exe`，**无控制台窗口**），工作目录锁定在 `episode2\` |
-| `run_episode2.cmd console` | 带控制台启动，能看到 traceback（排查启动失败用） |
-| `run_episode2.cmd shortcut` | 在**你自己的桌面**创建 / 更新 `Episode2.lnk`（目标 / 工作目录 / 图标都指 `episode2`），会回读字段并 `pause`；加一个目录参数可改输出位置 |
-
-> 桌面入口现状（2026-10-01 实测）：`手写笔记本与PDF批注.lnk`（原名保留）→
-> `handwriting-notebook\.venv\Scripts\pythonw.exe` + 参数 `main.py`，工作目录 `episode2`，图标 `episode2\assets\app.ico`
-> —— 双击直接启动 Episode2 源码版，无黑框；另有 `Episode2.lnk` → `episode2\run_episode2.cmd`，
-> 继续保留 `console` / `shortcut` 两个子命令。Episode1 的原快捷方式另存为
-> `手写笔记本与PDF批注.Episode1备份.lnk`（→ `handwriting-notebook\dist\…exe`，`5.2.2.0`），需要时双击即可回退。
-> （开发期写桌面曾被沙箱拒绝：`System.UnauthorizedAccessException HR=0x80070005`；沙箱放开后已由 Lead 直接改指并实测启动成功。）
-
 **命令行 / 拖放打开文件**：
 
 ```bash
@@ -135,10 +141,17 @@ python main.py "D:\书\book.pdf" "D:\笔记\笔记.note"   # 多个文件开成�
 ```
 
 - 把 PDF / `.note` 拖到 exe 图标上，或用资源管理器「打开方式」选择本程序，效果相同；
-- PDF 仍然恢复到**上次读到的那一页**；无效路径与未知类型会被**忽略**（不弹错、不开空标签）；
-- 实现上的坑（`main.py`）：必须在 `QApplication(sys.argv)` **之前**把文件路径从 `sys.argv` 里摘出来 ——
-  Qt 会吃掉并改写它自己的参数，之后再读就拿不到路径（打包版「拖文件到 exe 上打不开」就是这么来的）；
-- 回归测试：`tests/test_startup.py::test_cli_file_arguments_open_tabs`（正常文件开标签、坏路径与未知类型忽略）。
+- PDF 会恢复到**上次读到的那一页**；无效路径与未知类型会被**忽略**（不弹错、不开空标签）。
+
+**Windows 启动器**（可选）：仓库自带的 `run_episode2.cmd` 提供三种用法。
+
+| 命令 | 作用 |
+|---|---|
+| 双击 `run_episode2.cmd` | 用 `pythonw.exe` 无控制台启动 |
+| `run_episode2.cmd console` | 带控制台启动，能看到 traceback（排查启动失败用） |
+| `run_episode2.cmd shortcut` | 在桌面创建 / 更新 `Episode2.lnk`，会回读字段并暂停 |
+
+> 启动器优先使用仓库根目录的 `.venv`，因此按上文装好虚拟环境后即可直接使用。
 
 ---
 
@@ -149,14 +162,13 @@ python main.py "D:\书\book.pdf" "D:\笔记\笔记.note"   # 多个文件开成�
 | 手写 | 鼠标左键拖拽 / 触控笔书写 |
 | 橡皮擦 | 点击「橡皮」后在笔迹上拖拽（对象级擦除，可撤销） |
 | 荧光笔 | 点击「荧光笔」或按 `H`，在文字上拖拽即可标记 |
-| 切换颜色 | 点工具栏**颜色块** → 弹出常用色，**单击即换**（键盘 `1`~`9` 选第 N 个）；需要精调时点弹窗底部的「更多颜色…」打开完整调色板 |
+| 切换颜色 | 点工具栏**颜色块** → 弹出常用色，**单击即换**（键盘 `1`~`9` 选第 N 个） |
 | 切换笔宽 | 工具栏笔宽滑块 / 数字框（随当前工具切换） |
-| 调整界面宽度 | 拖拽侧边栏右侧的分隔条；窗口变窄时工具栏自动把次要按钮收进「»」菜单、侧边栏自动收起、状态栏隐藏坐标 |
 | 关闭标签 | 点标签上的 **×**、中键点击标签，或 `Ctrl+W` |
-| 把标签变成独立窗口 | **把标签往标签栏外面拖**，松手即可；拖到另一个窗口的标签栏上则并进那个窗口 |
+| 把标签变成独立窗口 | **把标签往标签栏外面拖**，松手即可 |
 | 缩放 | `Ctrl + 滚轮`，或工具栏 / 视图菜单的放大缩小 |
 | 平移 | 按住 `空格` 拖拽，或 `中键` 拖拽 |
-| 连续 / 单页阅读 | 工具栏的阅读模式按钮（窄窗口下在「»」里），或 `Ctrl+Shift+L` |
+| 连续 / 单页阅读 | 工具栏的阅读模式按钮，或 `Ctrl+Shift+L` |
 | 新建笔记 | `Ctrl+N`，可先选背景 |
 | 打开笔记 / PDF | `Ctrl+O` 或菜单「打开笔记… / 打开 PDF…」 |
 | 保存 | `Ctrl+S`（笔记存为 `.note`，PDF 批注存为同名 `.annot`） |
@@ -164,23 +176,61 @@ python main.py "D:\书\book.pdf" "D:\笔记\笔记.note"   # 多个文件开成�
 | 撤销 / 重做 | `Ctrl+Z` / `Ctrl+Y` |
 | 清空当前页 | `Ctrl+K` |
 
-PDF 批注文件默认写入原 PDF 同级目录，文件名相同、后缀为 `.annot`。再次用本程序打开该 PDF 时，若 MD5 一致会自动加载批注。
+**标签快捷键**：`Ctrl+T` 新建、`Ctrl+W` 关闭、`Ctrl+Tab` / `Ctrl+Shift+Tab` 上一个 / 下一个、
+`Ctrl+1`~`Ctrl+8` 直达第 N 个、`Ctrl+9` 最后一个、`Ctrl+Shift+T` 恢复刚关闭的标签。
+
+PDF 批注文件默认写入原 PDF 同级目录，文件名相同、后缀为 `.annot`。再次用本程序打开该 PDF 时，
+若 MD5 一致会自动加载批注。
 
 ---
 
-## 打包为 exe（PyInstaller）
+## Rust 加速核心（可选）
 
-`build.spec` 采用 **onedir（文件夹）模式**，并且是 **A5 白名单式裁剪**：不收集 PySide6 的
-qml / translations / metatypes / .pyi，按名字丢掉用不到的原生件（WebEngine、QtQml/Quick、
-QtPdf、opengl32sw、AVIF/WEBP 等）。实测 **684.8 MB → 113.1 MB**（3695 → 202 个文件）。
+程序把渲染与几何计算抽象成 `src/render/backend.py` 的后端契约，提供两份实现：
 
-1. 安装打包工具（建议在项目虚拟环境中）：
+- **Python 参考实现**（默认，无需任何额外工具链）；
+- **Rust 实现**（`rust/hn_core`，基于 tiny-skia + rstar + PyO3，走 numpy 缓冲零拷贝传参）。
+
+两者可逐点 / 逐像素对拍。**扩展缺失或 ABI 不匹配时会自动降级到 Python 实现**并写入日志，
+程序不会因为性能优化而不可用。
+
+### 构建
+
+```bash
+# 1) 工具链
+winget install Rustlang.Rustup
+rustup default stable-x86_64-pc-windows-msvc   # 没有 VS Build Tools 时可用 -gnu 目标
+pip install maturin
+
+# 2) 编译并安装扩展（产出 dist_rust/hn_core-*-cp310-abi3-win_amd64.whl）
+python build_rust.py
+python build_rust.py --check                   # 只检查扩展能否导入
+```
+
+### 切换后端
+
+```bash
+set HN_RENDER_BACKEND=python   # 强制参考实现
+set HN_RENDER_BACKEND=rust     # 强制 Rust（不可用时自动降级并记日志）
+set HN_RENDER_BACKEND=auto     # 默认：能用 Rust 就用
+```
+
+架构细节与对拍数据见 [EPISODE2.md](EPISODE2.md)。
+
+---
+
+## 打包为可执行文件
+
+`build.spec` 采用 **onedir（文件夹）模式**，并做 **白名单式裁剪**：不收集 PySide6 的
+qml / translations / metatypes / `.pyi`，按名字丢掉用不到的原生件（WebEngine、QtQml/Quick、QtPdf 等）。
+
+1. 安装打包工具：
 
    ```bash
    pip install pyinstaller
    ```
 
-2. 在项目根目录执行（会读取 `build.spec`）：
+2. 在项目根目录执行：
 
    ```bash
    pyinstaller build.spec
@@ -192,807 +242,234 @@ QtPdf、opengl32sw、AVIF/WEBP 等）。实测 **684.8 MB → 113.1 MB**（3695 
    dist\手写笔记本与PDF批注\手写笔记本与PDF批注.exe
    ```
 
-   直接双击该 exe 即可在 Windows 10/11 上运行（目标机器无需安装 Python）。
-   整个 `dist\手写笔记本与PDF批注\` 文件夹需一起拷贝分发（`_internal` 内含 Qt/Python 运行库）。
+   直接双击即可运行（目标机器无需安装 Python）。整个 `dist\手写笔记本与PDF批注\` 文件夹需一起分发。
 
-3. **打包后必须跑一次自检**（裁剪最容易伤到平台插件与运行时才加载的 PyMuPDF/PIL）：
+3. **打包后必须跑一次自检**（裁剪最容易伤到平台插件与运行时才加载的 PyMuPDF / PIL）：
 
    ```bash
    dist\手写笔记本与PDF批注\手写笔记本与PDF批注.exe --selftest %TEMP%\hn-check
    ```
 
    自检会离屏跑完「创建 PDF → 打开 PDF → 读目录 → 渲染 → 手写 → 保存批注(v2) → 导出 PDF
-   → 新建笔记 → 保存并读回」，成功打印 `SELFTEST OK`（`-w` 无控制台时结果同时写进
-   `<工作目录>\run-*\selftest.log`），失败返回非 0。源码环境用 `python main.py --selftest` 等价。
+   → 新建笔记 → 保存并读回」，成功打印 `SELFTEST OK`，失败返回非 0。
+   源码环境用 `python main.py --selftest %TEMP%\hn-check` 等价。
 
-4. 若你更想要**单个 exe 文件**（打包体积更大、启动稍慢），改用：
+4. 想要**单个 exe 文件**（体积更大、启动稍慢）可改用：
 
    ```bash
    pyinstaller -F -w --name "手写笔记本与PDF批注" ^
      --hidden-import pymupdf --hidden-import PIL main.py
    ```
 
-   （注意：`-F` 不会应用 `build.spec` 里的白名单裁剪，体积会回到数百 MB。）
+   （`-F` 不会应用 `build.spec` 里的白名单裁剪，体积会回到数百 MB。）
 
-### v5.2.2 打包验收（2026-10-01 实测）
+### 关于 SmartScreen「未知发布者」提示
 
-- **版本资源升到 `5.2.2.0`**（`assets/version_info.txt`，Episode1 / Episode2 两份同步）：含义是
-  保存位置兜底链 + 设置后端 INI 兜底 + 阅读位置回归；成品 exe 的「属性 → 详细信息」里
-  FileVersion / ProductVersion 均为 `5.2.2.0`。
-- **体积**：`pyinstaller build.spec` 重建后 `dist\手写笔记本与PDF批注\` 实测 **245 个文件 / 142.0 MB**
-  （A5 那轮是 202 个文件 / 113.1 MB）。CI 的体积预算已按本次实测从 `< 120 MB` 上调为 **`< 150 MB`**
-  （`episode2/.github/workflows/ci.yml`，口径＝整份 dist；上调原因＝ `numpy` / PyMuPDF 被带上后旧值过时，
-  留 ~6% 余量），**不再是超线状态**。
-- **成品自检**：`dist\手写笔记本与PDF批注\手写笔记本与PDF批注.exe --selftest <目录>` → **`SELFTEST OK`**（5/5 步）。
-- **成品真实启动**：命令行带上 PDF 启动后，标题变为 `book657.pdf - 手写笔记本与 PDF 批注`，
-  工具栏页码框显示 **`219 / 657`**（与写入的阅读进度 `page=218` 一致），最近文件列表出现该 PDF。
-- **受限环境**：注册表不可写时，成品自动改用 INI 设置文件，阅读进度写进 INI（不再静默丢失）。
+未签名的 exe 在别的机器上首次运行会触发 Windows SmartScreen 的声誉检查——**这不是杀毒告警**。
 
-### Windows 提示「未知发布者 / 已保护你的电脑」（SmartScreen）怎么办
-
-**先确认它到底在说什么**（2026-09-29 实测本机）：
-
-| 检查项 | 实测结果 | 说明 |
-|---|---|---|
-| Defender 定点扫描 `MpCmdRun -Scan -ScanType 3 -File <exe>` | **no threats** | 不是病毒告警 |
-| Defender 检测历史 | 本程序路径 **0 条** | 没有被判为威胁 |
-| Authenticode 签名 | `NotSigned` | **没有代码签名** |
-| 版本资源 | 已补（当时 `5.2.1.0`，现为 `5.2.2.0`；含产品名 + 发布者字段） | 见 `assets/version_info.txt` |
-| Mark-of-the-Web（下载标记） | 无 | 本机构建产物，不是「从网上下载」留下的标记 |
-| 智能应用控制（Smart App Control） | 0（关闭） | 不是它在拦 |
-
-结论：这是 **SmartScreen 对「未签名 + 低流行度」程序的声誉检查**，不是杀毒判定。
-触发它的根因有三条：
-
-1. exe **没有代码签名**——发布者身份为空，Windows 只能当成未知来源；
-2. 之前版本资源也是空的，程序看起来更没有身份（现已补上产品名/版本/图标）；
-3. **每次重新打包文件哈希都会变**（我这次 A5/A7 重建过），旧文件攒下的"本机允许"不会继承，
-   所以点过「仍要运行」之后，下次重新打包还会再问一次。
-
-**立刻能做的**：
-
-- 在提示里点「**更多信息**」→「**仍要运行**」——这是你本机自己构建的程序，属于预期行为；
-- **不要**为了它关闭 SmartScreen / Defender 全局防护，也**不需要**加杀毒排除项（根本没有检出）；
+- 在提示里点「**更多信息**」→「**仍要运行**」即可；
+- **不要**为了它关闭 SmartScreen / Defender 全局防护；
 - 如果 exe 是从别处拷来的（U 盘、聊天工具、压缩包），先解除下载标记：
-  `Unblock-File 'dist\手写笔记本与PDF批注\手写笔记本与PDF批注.exe'`（本机原生产物没有这个标记）。
+  `Unblock-File 'dist\手写笔记本与PDF批注\手写笔记本与PDF批注.exe'`。
 
-**根治（只有你能做，需要证书）**：
+根治需要代码签名证书（本仓库提供 `sign_dist.py`）：
 
 ```bash
-# 1) 打包（已在 build.spec 里接好图标与版本资源）
-pyinstaller build.spec
-# 2) 用证书签名（需要 Windows SDK 的 signtool）
-python sign_dist.py --pfx my.pfx --password ********
-#    或证书已装进证书库时：
-python sign_dist.py --thumbprint <证书指纹>
-# 只看当前签名状态：
-python sign_dist.py --check
+python sign_dist.py --pfx my.pfx --password <口令>
+python sign_dist.py --thumbprint <证书指纹>   # 或证书已装进证书库时
+python sign_dist.py --check                   # 只看当前签名状态
 ```
 
-- **自签名证书不能消除 SmartScreen 提示**（发布者依旧不被信任），只适合内部机器；
-- 对外分发用 **OV/EV 代码签名证书**或 **Azure Trusted Signing**（约 $9.99/月，需身份验证）。
-  EV 证书 / Trusted Signing 通常立即获得信任；OV 需要一点下载量累积声誉。
-- 签名之后「属性 → 详细信息」会显示证书主体，「未知发布者」提示消失。
-
-> 提示：Python 3.12 + PySide6 6.11 + PyMuPDF 1.28 环境下已验证可成功打包并运行；`build.spec` 末端的 `ROOT` 会自动向上查找含 `main.py` 的目录，因此从项目根目录执行即可。
-> 若 `dist/` 被正在运行的 exe 占用（Windows 会报 `WinError 32/5`），先结束进程再打包；
-> 确需临时打到别处时用 `pyinstaller build.spec --distpath dist_tmp --workpath build_tmp`，
-> 但**验证后请把成品放回 `dist/`** —— `cleanup_old_versions.py` 只保护 `dist/` 与 `build/`，
-> 交付物长期住在 `dist_*` 里会有被当成历史版本清掉的风险（脚本已加保险：`dist/` 缺失时默认跳过 `dist_*`）。
-> 裁剪清单与「为什么可以丢」写在 `build.spec` 的 `_DROP_NATIVE` 里，需要回退时删掉对应项重新打包即可；
-> 旧的大体积产物保留在 `build\dist_prev_684mb\`（可随时删除）。
+> 自签名证书**不能**消除 SmartScreen 提示，仅适合内部机器；对外分发需 OV/EV 代码签名证书
+> 或 Azure Trusted Signing。
 
 ---
 
-## 目录结构
+## 测试
+
+```bash
+pip install pytest ruff pyright
+```
+
+```bash
+pytest -q                       # 全量回归 + 性能预算
+ruff check                      # 静态检查（配置在 pyproject.toml）
+pyright                         # 类型检查（配置在 pyrightconfig.json，验收线为「无 error」）
+```
+
+**冒烟测试（offscreen，端到端）**：
+
+```bash
+python smoke_v4.py              # 打开 PDF / 目录 / 跳页 / 旋转 / 搜索 / 视图 / 背景色 / 存取 / 文本
+python smoke_v5.py              # 多标签 / 会话恢复 / 色盘 / 圆圈反馈策略
+python main.py --selftest %TEMP%\hn-check
+```
+
+**基准脚本**位于 `tests/benchmarks/`（真机整页重建 / 微基准 / 增量重绘 / 存储 / 采样简化 / 冷启动，
+全部支持 `--json`），口径见该目录的 README。
+
+CI 配置在 `.github/workflows/ci.yml`（windows-latest）：`ruff` → `pyright` → `pytest` →
+基准 JSON 存档 → 源码自检；第二个 job 负责打包 + 成品自检 + 体积预算。
+
+---
+
+## 项目结构
 
 ```
-handwriting-notebook/
-├── main.py                    # 程序入口（高 DPI 设置 + 启动主窗口）
+notebook-compre/
+├── main.py                    # 程序入口（高 DPI 设置 + 启动主窗口 + 命令行/拖放打开文件）
 ├── requirements.txt           # 运行依赖清单
-├── pyproject.toml             # 工具链配置（pytest testpaths / cache_dir）
-├── build.spec                 # PyInstaller 打包脚本（onedir）
-├── make_shortcut.py           # 在桌面创建启动快捷方式（自带 .lnk 二进制回退）
-├── cleanup_old_versions.py    # 把历史构建目录送进回收站（可恢复）
-├── env_compat.py              # ★ 运行环境兼容层（受限沙箱的临时目录问题）
-├── conftest.py                # pytest 配置（sys.path + 环境兼容）
-├── smoke_v4.py                # offscreen 端到端冒烟测试（阅读器 9 项）
-├── smoke_v5.py                # offscreen 端到端冒烟测试（多标签）
-├── probe_v5.py                # 离屏探针（多标签/渲染调试，非测试）
-├── probe_save_permission.py   # ★ 保存失败复现探针（只读/占用/目录不可写/残骸，逐个场景）
-├── diagnose_save_permission.py# ★ 保存失败排查工具（扫描 .annot/.note，--fix 修只读与残骸）
-├── make_icon.py               # 从 theme.py 的内嵌 SVG 生成 assets/app.ico
+├── run_episode2.cmd           # Windows 启动器（无控制台启动 / 建桌面快捷方式）
+├── build.spec                 # PyInstaller 打包脚本（onedir + 白名单裁剪）
+├── build_rust.py              # 一键编译并安装 Rust 核心
 ├── sign_dist.py               # 代码签名（消除 SmartScreen「未知发布者」）
-├── assets/
-│   ├── app.ico                # 应用图标（多尺寸：窗口/任务栏/exe 共用同一来源）
-│   └── version_info.txt       # exe 版本资源（产品名/版本/说明）
+├── env_compat.py              # 运行环境兼容层
+├── conftest.py                # pytest 配置（sys.path + 环境兼容）
+├── pyproject.toml             # 工具链配置（pytest / ruff）
+├── pyrightconfig.json         # 类型检查配置
+├── LICENSE                    # AGPL-3.0
+├── CONTRIBUTING.md
+├── THIRD_PARTY_NOTICES.md
 ├── README.md
+├── CHANGELOG.md               # 版本演进历史
+├── EPISODE2.md                # Rust 核心设计与对拍数据
+├── ROADMAP.md / ROADMAP_REVIEW.md
+├── assets/
+│   ├── app.ico                # 应用图标
+│   └── version_info.txt       # exe 版本资源
+├── rust/
+│   └── hn_core/               # ★ Rust 核心（tiny-skia + rstar + PyO3）
+│       ├── Cargo.toml
+│       ├── Cargo.lock
+│       ├── pyproject.toml     # maturin 配置（abi3-py310）
+│       └── src/lib.rs         # simplify / hit_test / rasterize
 ├── tests/
-│   ├── test_core.py           # 核心数据层（笔画/撤销/文档/导出）
-│   ├── test_tools.py          # 工具系统 / 绘制器 / 设置
-│   ├── test_note_background.py# 笔记背景色（持久化/渲染/导出）
-│   ├── test_pdf_switch.py     # 连续打开 PDF 的缓存串味回归
-│   ├── test_reader_features.py# 目录 / 搜索 / 旋转 / 页码跳转
-│   ├── test_highlighter.py    # 荧光笔（注册/等宽/半透明导出/UI 接线）
-│   ├── test_reading_modes.py  # 阅读增强（打开提速/连续阅读/进度恢复）
-│   ├── test_serializer.py     # A4：v2 二进制容器（往返/兼容/损坏报错/原子写）
-│   ├── test_async_save.py     # A4：后台保存（不阻塞 UI / 失败标回脏 / 关闭前等待）
-│   ├── test_save_permission.py# ★ 保存失败成因（只读自愈/被占用/目录不可写/残留临时文件）
-│   ├── test_pressure_render.py# A1：压感变宽轮廓（几何一致/圆头/预算）
-│   ├── test_incremental_repaint.py # A2：脏矩形增量重绘（与整页重建逐字节一致）
-│   ├── test_simplify.py       # A3：采样 + RDP 简化（点数/外观/抬笔重绘）
-│   ├── test_startup.py        # A6：启动路径不加载 PyMuPDF、线程池惰性启动
-│   ├── test_format.py         # A7：格式统一入口（v1/v2 分发、v1→v2 升级）
-│   ├── test_log.py            # A7：结构化日志
-│   ├── test_selftest.py       # A5：--selftest 自检入口（可重跑）
-│   ├── test_packaging.py      # 打包元数据：图标/版本资源/签名脚本
-│   └── benchmarks/            # 基准脚本（渲染/增量/存储/简化/冷启动，支持 --json）
+│   ├── test_*.py              # 单元与回归测试
+│   └── benchmarks/            # 基准脚本（渲染 / 增量 / 存储 / 简化 / 冷启动 / 后端对拍）
 └── src/
-    ├── __init__.py
     ├── core/                  # 核心数据层（与 UI 完全解耦）
-    │   ├── stroke.py          # Stroke、命令式撤销/重做、UndoManager、RDP 简化、几何工具
-    │   ├── format.py          # ★ 文档格式统一入口（版本常量 / v1⇄v2 分发 / 就地升级）
-    │   ├── serializer.py      # ★ v2 二进制容器（列式点数据 + CRC32 + 原子写）
+    │   ├── stroke.py          # Stroke、命令式撤销/重做、RDP 简化、几何工具
+    │   ├── format.py          # 文档格式统一入口（v1/v2 分发 / 就地升级）
+    │   ├── serializer.py      # v2 二进制容器（列式点数据 + CRC32 + 原子写）
     │   ├── note_document.py   # 笔记文档（.note，多页，背景样式+背景色）
     │   ├── annot_document.py  # 批注文档（.annot，含 PDF MD5）
+    │   ├── annot_store.py     # 批注保存位置的兜底链
+    │   ├── document_tab.py    # 标签级文档状态
     │   ├── colors.py          # 颜色工具（明暗判定 / RGBA 解析 / 半透明叠加）
-    │   ├── hn_log.py          # ★ 结构化日志（HN_DEBUG=1 / HN_LOG=level）
+    │   ├── hn_log.py          # 结构化日志
     │   └── settings.py        # 偏好持久化（主题/工具/笔色笔宽/最近文件/窗口几何）
-    ├── tools/                 # ★ 工具系统（可扩展）
+    ├── tools/                 # 工具系统（可扩展）
     │   ├── base.py            # Tool 抽象基类 + ToolContext
     │   ├── pen.py             # 钢笔（压感）
     │   ├── highlighter.py     # 荧光笔（半透明等宽）
     │   ├── eraser.py          # 橡皮（对象级擦除）
     │   └── registry.py        # 工具注册表（扩展点）
     ├── render/                # 渲染 / 导出层
+    │   ├── backend.py         # ★ 渲染后端契约（Python 参考实现 + Rust 实现 + 自动降级）
     │   ├── pdf_engine.py      # PDF 打开、异步渲染、搜索、导出烧录
-    │   ├── stroke_painter.py  # ★ 笔迹绘制唯一真源（平滑 + 压感）
+    │   ├── stroke_painter.py  # 笔迹绘制唯一真源（平滑 + 压感）
     │   └── thumbnail_pool.py  # 有界线程池的 PDF 缩略图加载器
     └── ui/                    # 界面层
-        ├── canvas.py          # 手写画布：信号 + 视图状态 + 工具 + 缩放/旋转 + 编辑
-        ├── canvas_render.py   # ★ A7 拆出：整页重建 / 脏矩形增量重绘 / PDF 异步渲染
-        ├── canvas_input.py    # ★ A7 拆出：鼠标 / 触控笔 / 滚轮 / 键盘（双通道互斥）
-        ├── canvas_layout.py   # ★ A7 拆出：页面⇄显示坐标、连续阅读纵向布局
-        ├── window_registry.py # ★ 多窗口登记表（全进程单例，弱引用）
-        ├── layout_constants.py# ★ 窗口/侧边栏尺寸常量（共享一份）
-        ├── save_worker.py     # ★ A4：后台保存调度（小文档同步、大文档后台）
-        ├── selftest.py        # ★ A5：打包后自检（--selftest 入口）
-        ├── controllers/       # ★ A7 拆出的主窗口职责（MainWindow 由它们组合而成）
-        │   ├── ui_build.py    #   侧栏/顶栏/菜单/快捷键/状态栏构建
-        │   ├── ui_theme.py    #   主题、响应式布局、侧边栏折叠
-        │   ├── tab_ops.py     #   标签生命周期、标题/图标、关闭与切换
-        │   ├── window_ops.py  #   多窗口（撕标签/合并）、会话、关闭确认
-        │   ├── file_ops.py    #   打开/保存/导出/最近文件/文档信息
-        │   ├── reading_ops.py #   翻页、阅读模式、搜索、画布信号槽
-        │   └── tool_ops.py    #   工具/颜色/笔宽/背景/触控反馈
-        ├── thumbnail_panel.py # 缩略图侧栏（竖向每页一条）
+        ├── canvas.py          # 手写画布：视图状态 + 工具 + 缩放/旋转 + 编辑
+        ├── canvas_render.py   # 整页重建 / 脏矩形增量重绘 / PDF 异步渲染
+        ├── canvas_input.py    # 鼠标 / 触控笔 / 滚轮 / 键盘（双通道互斥）
+        ├── canvas_layout.py   # 页面⇄显示坐标、连续阅读纵向布局
+        ├── main_window.py     # 主窗口：属性代理 + 组装
+        ├── controllers/       # 主窗口职责拆分（ui_build / tab_ops / file_ops / reading_ops …）
+        ├── theme.py           # 浅/深色 QSS + 内嵌 SVG 图标
+        ├── topbar.py          # 响应式顶栏
+        ├── color_palette.py   # 常用色快捷盘
+        ├── thumbnail_panel.py # 缩略图侧栏
         ├── outline_panel.py   # 目录（书签）树
         ├── search_panel.py    # 全文搜索面板 + 后台检索线程
-        ├── theme.py           # 浅/深色 QSS + 内嵌 SVG 图标（样式与逻辑分离）
-        ├── topbar.py          # ★ 响应式顶栏（窗口变窄时次要控件进「»」溢出菜单）
-        ├── color_palette.py   # ★ 常用色快捷盘（色块网格弹窗 + 「更多颜色…」入口）
-        ├── win_feedback.py    # Windows 触控/笔「圆圈反馈」的按窗口控制（v5.1）
-        └── main_window.py     # 主窗口：属性代理 + 组装（A7 后 300 行）
+        └── …
 ```
 
-设计原则：
-1. **核心逻辑（core）与界面（ui）分离**，便于维护与测试；坐标统一使用「页面 points」，导出与显示都不需要坐标换算。
+---
+
+## 设计原则
+
+1. **核心逻辑（core）与界面（ui）分离**，便于维护与测试；坐标统一使用「页面 points」，
+   导出与显示都不需要坐标换算。
 2. **画布与具体工具解耦**：画布只认 `Tool` 抽象，具体语义在 `src/tools` 中，新增工具不需要改画布。
 3. **笔迹渲染只有一份实现**（`render/stroke_painter.py`），画布、缩略图、导出共用，保证外观一致。
-   （例外：书写过程中的「增量墨迹」在 `ui/canvas_render.py` 的 `_draw_live_ink()` 里，每来一个点只补画
-   最新一段——它用同一套二次贝塞尔公式，但确实是第二份代码；改渲染公式时两处都要动。）
-4. **每个文件 < 600 行**（A7）：`main_window.py` 只留属性代理与组装，交互语义按职责拆到
-   `ui/controllers/*`；画布拆成 view / render / input / layout 四块。
+4. **渲染后端可在 Python / Rust 之间切换**，且始终保留参考实现，优化不会导致程序不可用。
+5. **每个文件 < 600 行**：`main_window.py` 只留属性代理与组装，交互语义按职责拆到 `ui/controllers/*`；
+   画布拆成 view / render / input / layout 四块。
 
 ---
 
-## 测试
+## 环境变量
 
-### 自动化测试
-
-```bash
-pip install pytest
-pytest -q                      # 全部 299 个用例（298 passed + 1 skipped：受限环境等跳过；2026-10-06 实测）
-```
-
-覆盖范围：笔画序列化、撤销 / 重做命令、笔记与批注的保存 / 加载（含 v1/v2 两种容器、
-损坏文件报错、原子写）、笔记导出为 PDF、工具系统与注册表、笔记背景色、连续打开 PDF 的缓存
-串味回归、目录 / 搜索 / 旋转 / 页码跳转、荧光笔（半透明导出）、多标签隔离与会话恢复、
-常用色快捷盘与系统圆圈反馈策略、保存失败的各类成因（只读属性 / 被占用 / 目录不可写 / 崩溃残骸）；
-以及路线 A 的四项验收：压感渲染几何一致性、脏矩形增量重绘与整页重建逐字节一致、
-采样/简化后的点数与外观、后台保存不阻塞 UI、启动路径不加载 PyMuPDF；
-v5.3 的画布滑动条（显隐与占位、拖动到底即夹紧极限、抓滑块不跳、条上滚轮与 `↑↓` 微调、
-翻页后同步、多标签各自独立、深浅底色配色）。
-配置见 `pyproject.toml`（`testpaths`、`cache_dir`）。
-
-### 冒烟测试（offscreen，端到端）
-
-```bash
-python smoke_v4.py             # 9 项：打开 PDF / 目录 / 跳页 / 旋转 / 搜索 / 视图 / 背景色 / 存取 / 文本
-python smoke_v5.py             # 11 项：多标签 / 会话恢复 / 色盘 / 圆圈反馈策略
-python main.py --selftest      # 打包自检同一套逻辑（打开 PDF → 手写 → 存批注 → 导出 → 存笔记）
-```
-
-### 静态检查与 CI（A7）
-
-```bash
-.venv\Scripts\ruff.exe check    # 配置在 pyproject.toml
-.venv\Scripts\pyright.exe       # 配置在 pyrightconfig.json
-```
-
-- 现状：`ruff` **0 问题**；`pyright` **0 error / 424 warning**（`basic` 模式；PySide6 的动态属性 /
-  可选性收窄会产生 warning，验收线是「无 error」）。
-- CI：`.github/workflows/ci.yml`（windows-latest）—— ruff → pyright → pytest → 四组基准 JSON 存档
-  → 源码自检；第二个 job 负责打包 + **成品自检** + 体积预算（**< 150 MB**，2026-10-01 按实测 142.0 MB 上调）。
-
-### 独立验收（2026-10-01，冻结版）
-
-由独立验收方（verifier）在冻结版上复跑（只读验证，不改代码）：
-
-| 项 | 结果 |
-| --- | --- |
-| episode2 全量测试 | **283 passed / 1 skipped**（含 `test_startup` / `test_selftest`） |
-| 保存兜底链 | **9/9**：PDF 旁边与 `%LOCALAPPDATA%` 都不可写时，批注落到 `%TEMP%` 候选并**能读回** |
-| 全目录不可写 | **12/12**：不崩；错误文本含「所有备用位置都写不进去」+ 候选位置清单；旧 `.annot` **字节不变**；无 `.tmp-` 残骸 |
-| 真实 656 页书 | **14/14**：注册表不可写 → 自动 INI 后端；关闭前 `page=222/656`（状态栏「页: 223 / 656」），重开后一致 |
-| `HN_ANNOT_DIR` | **9/9**：显式指定的目录被优先用作兜底；PDF 旁边可写时仍优先 PDF 旁边 |
-| 桌面快捷方式 | 冻结验收时 `Episode2.lnk` 仍缺失（会话沙箱限制）；验收后沙箱放开，Lead 已直接创建并把它与 `手写笔记本与PDF批注.lnk`（改指 Episode2 源码版）都实测双击启动成功，Episode1 的原快捷方式另存为 `手写笔记本与PDF批注.Episode1备份.lnk` |
-
-### 手动测试清单
-
-1. **新建笔记**：`Ctrl+N` → 用鼠标在页面书写 → 切换「橡皮」擦除部分笔迹 → `Ctrl+Z` 撤销、`Ctrl+Y` 重做 → `Ctrl+K` 清空当前页。
-2. **保存 / 打开笔记**：`Ctrl+S` 保存为 `.note`；关闭程序后重新打开该 `.note`，笔迹与页数应完全一致。
-3. **多页**：添加页、删除页、用缩略图或页码跳转。
-4. **PDF 批注**：打开一个 PDF → 在任意页手写 → `Ctrl+S` 保存（生成 `.annot`）→ 关闭后重新打开同一 PDF，批注应自动恢复。
-5. **导出 PDF**：`Ctrl+E` 导出带批注的 PDF，用外部阅读器打开确认批注位置正确、与原文对齐。
-6. **高 DPI**：在系统设置中将缩放改为 150% / 200%，重启程序，界面与笔迹仍清晰。
-7. **异常**：尝试打开一个损坏的 `.note` / 无法解析的 PDF，应弹窗提示且不崩溃。
-8. **连续阅读**：打开一个多页 PDF → 点工具栏最右侧按钮（或 `Ctrl+Shift+L`）切到连续阅读 → 滚动，页面应连续排列、页码自动跟随 → 在任意页上写字，批注应落在该页。
-9. **阅读进度**：翻到第 10 页 → 关闭程序 → 重新打开同一份 PDF，应直接回到第 10 页（连续模式还会回到相同滚动位置）。
-10. **书写调试**：若某台机器上仍画不出笔迹，在命令行先 `set HN_DEBUG=1` 再启动 exe，观察控制台是否打印 `mousePress` / `tabletPress` 与 `pointer_down`，据此判断是事件未到达还是坐标越界。
-11. **保存被「只读 / 占用」挡住**：让 `.annot` 只读（`attrib +r 文件`）或用别的程序打开着它，再 `Ctrl+S` —— 只读应自动自愈并保存成功；被占用应给出「哪个文件 / 为什么 / 怎么办」的提示，原文件不变、目录里不出现 `.tmp-` 残骸。可用 `python diagnose_save_permission.py <目录>` 复核（`--fix` 顺手修只读属性与残骸）。
+| 变量 | 作用 |
+|---|---|
+| `HN_DEBUG=1` | 打印鼠标 / 触控笔的按下、移动、释放坐标，便于排查书写问题 |
+| `HN_LOG=<level>` | 调整结构化日志级别 |
+| `HN_RENDER_BACKEND=python\|rust\|auto` | 选择渲染后端（默认 `auto`） |
+| `HN_ANNOT_DIR=<目录>` | 显式指定批注的兜底保存目录 |
+| `HN_PRESSURE_OUTLINE=0` | 关闭压感变宽轮廓渲染，回到逐段 `drawLine` |
+| `HN_SKIP_PERF=1` / `HN_PERF_SCALE=<系数>` | 关闭 / 放宽性能预算闸门 |
 
 ---
 
-## v4：商用级 PDF 阅读器 + 笔记背景颜色
-
-**PDF 阅读器化**（侧边栏重构为「页面 / 目录 / 搜索」三个标签）：
-
-| 功能 | 说明 |
-| --- | --- |
-| 书签目录 | `PdfEngine.outline()` 包装 `doc.get_toc()`；`QTreeWidget` 多级树，单击跳转，翻页自动高亮当前节点；无书签时给出明确提示 |
-| 全文搜索 | 后台线程 `PdfSearchWorker`（独立 fitz 文档，不与渲染线程争用）；结果列表 + 上下文，点击 / 上一个 / 下一个循环跳转，命中矩形在页面上高亮（当前处橙色、其余黄色）；支持区分大小写（对 `search_for` 结果做文本二次校验）与全词匹配（`get_text("words")` 定位命中所在完整单词，避免 keyword 被截断成 key 造成误判） |
-| 页码跳转 | `QSpinBox.setKeyboardTracking(False)` —— 输入「12」不会先跳第 1 页；`Ctrl+G` 对话框；`PgUp/PgDn/←/→/Home/End` 全局快捷键 |
-| 视图模式 | 适应页面 / **适应宽度** / 实际大小（100%） |
-| 页面旋转 | 0/90/180/270°。关键实现：所有「页面坐标 ⇄ 显示坐标」换算统一走 `_page_xform()`（QTransform），旋转只影响显示，批注始终存原始页面坐标 → 旋转后批注依然贴在原文上，导出永远使用原始方向。缩放锚点也改用真实逆变换（旧实现隐含「无旋转」假设，旋转后缩放会跑偏） |
-| 其它 | 文档信息（标题/作者/页数/加密/大小）、复制当前页文本、页面文本提取 |
-
-**手写笔记本背景颜色**：
-
-- `NoteDocument` 新增 `background_color` 字段，`.note` 格式升级到 **1.1**（旧文件缺省白色，完全兼容）。
-- 工具栏背景样式旁新增色块按钮：8 种预设纸色 + 自定义取色，选择持久化到设置。
-- 画布、缩略图、导出 PDF 三处渲染同步使用背景色；深色底上网格 / 横线 / 点阵自动切换为浅色（`src/core/colors.py`：相对亮度判定）。
-
-**其它修复**：
-
-- 修复旋转 / 平移坐标换算、渲染缓存键补上旋转维度 `(doc_key, index, scale, rotation)`。
-- 测试从 26 个扩展到 **45 个**（新增目录 / 搜索 / 旋转 round-trip / 页码跳转 / 背景色持久化与渲染等回归），offscreen 冒烟测试 9 项全过。
-
----
-
-
-
-## 缺陷修复：保存时报 `PermissionError`（旧 `.annot` 挡住新写入）
-
-**现象**：`Ctrl+S` 保存 PDF 批注时弹出
-
-```
-保存到 D:\…\论文.annot 失败：
-PermissionError: [WinError 5] 拒绝访问。: 'D:\…\.论文.annot.tmp-8712' -> 'D:\…\论文.annot'
-```
-
-**排查**（`python probe_save_permission.py` 逐个场景实测复现，结论：**与旧文件的格式无关**）：
-
-| 可能原因 | 实测结果 |
-| --- | --- |
-| 旧 `.annot` 是 v1 JSON（格式不同，怀疑「新旧冲突」） | **不是问题**：能被 v2 正常覆盖（`test_overwriting_legacy_v1_annot_works`） |
-| 旧 `.annot` 带「只读」属性（从只读介质 / 别的机器拷来） | `[WinError 5]`——**最常见死因** |
-| 旧 `.annot` 仍被别的程序打开（阅读器 / 网盘同步 / 杀毒扫描） | `[WinError 5]`/`[WinError 32]` |
-| 保存目录不允许写入（ACL 受限 / `Program Files` 之类） | `[Errno 13]` |
-| 上一次崩溃留下 `.<名字>.tmp-<pid>` 残骸（旧实现按 pid 命名） | pid 复用时 `[Errno 13]` |
-
-顺带查出三处让问题更难看懂、甚至丢数据的实现缺陷：
-
-1. **临时文件名只有 pid**：pid 复用撞上残骸就必失败，而且 `finally` 会顺手删掉「不是自己建的」文件；
-2. **错误消息里是临时文件路径**：用户看不出是哪个文件、该做什么；
-3. **旧 v1 批注被当成笔记**：`read_document()` 把**所有** v1 JSON 都判成 `note`，于是
-   `AnnotDocument.load()` 抛「这是一个笔记（.note）文件」→ 打开 PDF 时旧批注全空，
-   下一次 `Ctrl+S` 又把这个旧文件覆盖成空批注（**静默丢批注**）。
-
-**改正**：
-
-- `serializer.write_atomic()` 重写（`src/core/serializer.py`）：
-  * 临时文件名 = `.<名字>.tmp-<pid>-<随机>` + `O_EXCL`，不撞残骸、只清理自己那一个；
-  * 目标带只读属性 → 清掉后立刻重试（用户自己的数据文件，按下保存就是要覆盖它）；
-  * `WinError 5/32/33`（瞬时占用）按 0.05 / 0.15 s 重试，杀毒 / 同步盘的毫秒级占用可自愈；
-  * 仍失败则抛 `WriteError`：**目标路径 + 原因（只读 / 被占用 / 目录不可写 / 磁盘满）+ 可执行建议**，
-    并且原文件保持不动（要么被完整替换，要么一点没变）。
-- `format.kind_of_v1()`（`src/core/format.py`）：v1 JSON 按字段特征判类型（带 `pdf_md5`/`pdf_path` 的是批注），
-  `read_document()` / `format_info()` / `upgrade_file()` 共用同一判断 —— 旧批注能重新加载，不再被静默覆盖。
-- 新增排查工具 `diagnose_save_permission.py`：
-
-```bash
-python diagnose_save_permission.py "D:\我的论文"        # 逐个文档报告：只读 / 占用 / 目录不可写 / 残骸
-python diagnose_save_permission.py "D:\我的论文" --fix  # 顺手清掉只读属性与残骸（--json 输出机器可读）
-```
-
-- 回归测试 11 个（`tests/test_save_permission.py`）：只读自愈、旧 v1 批注照常覆盖、残骸不影响保存且不被误删、
-  被占用时的消息与「原文件不动」、目录不可写、目录不存在、同名目标是文件夹、瞬时占用重试、
-  排查脚本的判定与退出码。
-
-### 第二轮修复（2026-10-01）：兜底位置也写不进去
-
-**现象**：`Ctrl+S` 保存批注时弹窗
-
-```
-WriteError: 创建临时文件失败：保存位置（文件夹）不允许写入
-
-文件：%LOCALAPPDATA%\手写笔记本与PDF批注\annotations\<12 位哈希>-<原 PDF 文件名>.annot
-```
-
-这次失败的是**兜底位置**（第一轮引入的 `%LOCALAPPDATA%\手写笔记本与PDF批注\annotations\`），不是 PDF 旁边 ——
-也就是说「PDF 旁边写不了就退到兜底目录」这条后路本身被堵死了。
-
-**根因**（本机实测）：进程处在上层文件沙箱 / 受限 ACL 下时，PDF 所在目录与上面这个兜底目录**同时**不可写：
-对兜底目录做 `os.open(..., O_CREAT|O_EXCL)` 得到 `PermissionError [Errno 13] winerror=None`，
-而目录 ACL 看上去仍是全权限 —— 拒绝发生在 ACL 之外（沙箱层），所以「清只读属性 / 改 ACL」都救不了；
-同一进程下实测工作区目录与 `%TEMP%` 可写。
-
-**改正**：
-
-- 兜底目录不再写死一个路径，改成**候选链**：按顺序逐个「真的建一个文件」探测，取第一个成功的。
-  顺序是 `HN_ANNOT_DIR` → `%LOCALAPPDATA%` → `%APPDATA%` → `文档` → **系统临时目录**
-  （`%LOCALAPPDATA%` 是历史兜底位置，所以老批注照旧能找回；落到系统临时目录的那一份可能被系统清理，
-  下次保存会在能写的位置重新写一份）；
-- 支持环境变量 `HN_ANNOT_DIR` 显式指定批注目录（放在链首）：
-
-```bat
-set HN_ANNOT_DIR=D:\我的批注
-```
-
-- 打开 PDF 时按**同一顺序**找回批注：PDF 旁边 → 候选链 —— 不会「这次存进去了、下次读不到」；
-- 文件名不变，仍是 `<12 位路径哈希>-<原文件名>.annot`（哈希取自 PDF 绝对路径，确定性），
-  换目录后同一本书依旧唯一对应。
-
-候选链的完整名单与探测口径以 `src/core/annot_store.py` 为准，回归测试见 `tests/test_annot_store.py`
-（路径确定性、目录不可写时改道、重新打开能从兜底位置读回）；本轮未实测到的其它缺陷不在本节范围内。
-
-自查（沿用第一轮的排查工具）：
-
-```bash
-python diagnose_save_permission.py "D:\我的论文"        # 只读 / 占用 / 目录不可写 / 残骸，逐个报告
-python diagnose_save_permission.py "D:\我的论文" --fix  # 顺带清掉只读属性与残骸
-python diagnose_save_permission.py "D:\我的论文" --json # 机器可读（退出码 0 / 1 / 2）
-```
-
-**页码 / 阅读位置**（同一轮离线实测，不是「应该没问题」）：用 **656 页英文书真实 PDF** 走
-「打开 → 跳页 → 连续模式滚动 → 关闭 → 重开」，状态栏页码与页码框**都恢复到正确页**；
-回归测试在 `tests/test_page_state.py`（恢复页同步到状态栏 / 页码框、切标签刷新页码、滚动也要落盘、
-旧窗口不覆盖新位置、文件只改 mtime 仍能恢复）。
-
----
-
-## 第三处修复：设置写不进去（注册表被禁）→ 自动改用 INI 文件
-
-**现象**：在受限策略 / 沙箱 / 只读注册表的环境里，「上次读到第几页」「上次打开的标签」「主题」「笔色」
-这类偏好**关掉再开就全没了** —— 用户看到的就是「记不住阅读位置、页码不对」。
-
-**根因**：默认后端是 Windows 注册表 `HKCU\Software\WorkBuddy\HandwritingNotebook`。注册表写不进去时
-`QSettings` **不抛异常**，只是把 `status()` 置为 `AccessError`：程序里看着一切正常，退出时静默丢失。
-注意它与「保存失败会弹窗」那类问题不同 —— 它连弹窗都没有，只能靠现象反推。
-
-**改正**（`src/core/settings.py`）：
-
-- 启动时**真探一次注册表**（写探针值再读回来）：写得进 → 继续用注册表（历史行为不变）；
-  写不进 → 自动改用 INI 文件，并在 `%LOCALAPPDATA%\手写笔记本与PDF批注\registry-unavailable.flag`
-  记一笔，之后启动不再反复探测；
-- INI 候选顺序：`HN_SETTINGS_FILE`（显式指定）→ `%APPDATA%\WorkBuddy\HandwritingNotebook.ini`
-  → `%LOCALAPPDATA%\手写笔记本与PDF批注\settings.ini` → `%TEMP%\手写笔记本与PDF批注\settings.ini`；
-  **已经存在的 INI 优先复用** —— 换后端之后旧偏好照样读得回来；
-- 开关：`HN_SETTINGS_INI=1` 强制用 INI（跳过注册表）；`HN_SETTINGS_FILE=<路径>` 指定设置文件；
-- 排查：`AppSettings.storage()` 返回 `{'backend': 'registry' | 'ini', 'path': ...}`（`storage_text()` 给一行中文说明）。
-  `python diagnose_save_permission.py` 会**先打印设置后端与批注兜底候选链（逐个真探测）**；
-- 回归测试（`tests/test_page_state.py`）：注册表被禁 → 选 INI（`test_settings_backend_falls_back_to_ini_when_registry_blocked`）、
-  INI 跨实例往返（`test_settings_ini_round_trip_across_instances`）、INI 后端下「重开回到上次那一页」端到端
-  （`test_page_restore_under_ini_backend`）。
-
-> 排查「为什么阅读位置有时记不住」：受限沙箱（DSH 等）里注册表与 `%LOCALAPPDATA%` **都可能写不进去**，
-> 跑一次 `python diagnose_save_permission.py` 就能看到程序实际把设置 / 批注写到哪儿
-> （先打印设置后端 + 批注兜底候选链，判定以脚本实际输出为准）。
-
----
-
-## v5.3：画布右侧 / 下侧滑动条（网页式滚动）
-
-### 问题
-
-画布是自研的 offset 模型（连续阅读把整篇纵向排布、按视口滚动），此前只能靠
-**空格 / 中键拖拽**或滚轮移动：**看不到自己在文档的哪个位置，也抓不住**——
-文档一长就明显（也是「像网页一样能拖的滚动条」这个诉求的来源）。
-
-### 做了什么
-
-- **两条自绘滑动条**（`src/ui/page_scrollbar.py`，不继承 `QAbstractScrollArea`）：
-  细轨道 + 圆角滑块，半透明压在画布上；待机时滑块约 28% 不透明度（看得见但不抢戏）、
-  悬停 / 滚动时提亮到约 46%、拖动时用主题绿。
-- **显示策略与网页一致**：内容装得下就隐藏（页面照旧居中），装不下才出现；两条互相占位
-  （横条出现会吃掉 13px 可用高度，极端尺寸下判定跑第二遍收敛），右下角不重叠。
-- **占位而不是盖住纸面**：滑动条一出现，视口就减去它占的那 13px，
-  夹紧与「适应宽度」都按新视口计算 —— 贴边的批注不会被条压住，也点得到。
-- **一套边界，两个入口**：`_clamp_bounds()` 是唯一的边界来源，`_clamp_offset()`（手势平移 /
-  缩放 / 翻页）与滑动条都读它。于是滑块拖到底就是夹紧的极限；手势平移到底后再抓滑块，
-  位置也不会跳（有专门的回归用例）。
-- **交互**：拖滑块连续滚动；点轨道朝该方向翻一屏并顺势进入拖动；滚轮落在条上照样滚
-  （原样转发给画布，不吞事件）；`↑` / `↓` 一次 48px 微调。
-  `PgUp / PgDn / ← / → / Home / End` 仍是原有的「翻页 / 到首尾」（主窗口 QShortcut，
-  优先级高于控件事件——画布里不再重复实现，避免死分支），翻页后滑块自动跟随。
-- **配色跟着底色走**：按画布底色的亮度决定滑块用深色还是浅色，浅色 / 深色主题与用户自定义
-  纸色都不必单独配一套；滑动条不抢焦点（`Qt.NoFocus`），手写与快捷键不受影响。
-
-### 验证
-
-- 新增 `tests/test_page_scrollbar.py`：滑块几何 / 拖动 / 轨道点击 / 滚轮转发 / 配色切换、
-  显隐与占位、拖到底 = 夹紧极限、抓滑块不跳、键盘微调、连续阅读下与翻页和平移同步、
-  多标签各自独立。
-- `ruff` 全绿；`pyright` 无新增 error。
-
----
-
-## v5.2：浏览器级自适应界面（窗口缩放 + 标签关闭按钮）
-
-### 问题（实测数据，不是感觉）
-
-| 现象 | 实测 | 根因 |
-| --- | --- | --- |
-| 界面缩放有问题、右侧按钮被切掉 | **窗口最小宽度 1873px** | 顶栏把 36 个控件硬排成一条 `QHBoxLayout`（布局 minimumSize **1625px**），再加固定 248px 侧边栏。150% 缩放的 1920×1080 屏逻辑宽度只有 1280 —— 窗口比屏幕还宽 |
-| 每个标签都没有 × | `tabsClosable = False`、`tabButton(i) = None` | `setTabsClosable(True)` 写在了 `setTabBar()` **之前**：QTabWidget 把「可关闭」记在自己身上并转给**当时的**标签栏，新装的 `DocTabBar` 拿不到关闭按钮 |
-| 侧边栏不能拖、窄窗口不让位 | `setFixedWidth(248)` | 硬编码，且没有自动折叠 |
-
-### 改造
-
-**1. 响应式顶栏（新增 `src/ui/topbar.py`）**
-- 换成 `QToolBar`：Qt 自带「放不下就进溢出菜单」，而且会把**原控件**搬进弹出菜单再搬回来 —— 滑块、下拉框、页码框都不会失效，不需要写代理控件。
-- 控件按重要性排列：`add_core()` 的核心组（菜单 / 新建 / 打开 / 保存 / 撤销重做 / 三种笔 / 颜色 / 笔宽）**永远可见**；`add_optional()` 越靠后越先被收进「»」。
-- **成组同进同退**（`_cluster()`）：不会出现「有上一页、没下一页」这种半截状态。
-- 实测溢出顺序：1600px 宽 **0 个**控件进溢出；1280px 收起「阅读模式 / 背景 / 旋转 / 导出 / 搜索 / 主题」；再窄逐级收翻页、缩放。
-- 顺带修掉一个主题 bug：旧分隔线是 `QWidget + 硬编码 #e5e5e5`（深色主题下颜色是错的），现在用 `QToolBar::separator` 跟随主题。
-
-**2. 窗口尺寸**
-- `setMinimumSize(720, 480)`；初始尺寸按**屏幕可用区的 86%** 计算（不再硬编码 1280×860）并居中偏上。
-- `_clamp_to_screen()`：恢复历史几何后再夹一次 —— 旧版存下来的「1873px 超宽窗口」不会被恢复出来。
-
-**3. 侧边栏**
-- `QSplitter` 可拖拽调宽（180~460px），宽度写入设置，下次启动沿用。
-- 窗口 < 940px 自动收起、变宽自动恢复；**只在跨越阈值时动作**，所以用户手动展开/折叠过的状态不会被反复覆盖。
-
-**4. 标签栏浏览器化**
-- × 修好：`setTabsClosable` 移到 `setTabBar` **之后**，并给每个 × 贴上主题 SVG 图标（`theme.icon("close")`），DPI 无关、跟随主题换色。
-- **QSS 里故意不写 `QTabBar::close-button`**：QSS 一旦接管这个子控件，Qt 就不再绘制按钮自身的图标，× 会变成一块空白（这次踩到的坑，已写进注释防回归）。
-- `usesScrollButtons` 开启；窄窗口下标签自动变短但 × 不丢；右键菜单补齐「关闭左侧标签」。
-
-**5. 状态栏**：窗口 < 860px 时自动隐藏「坐标」，把宽度让给页码与缩放。
-
-**6. 把标签拖出来 → 独立窗口（浏览器式）**
-- 按住标签往标签栏外面拖，松手就变成**独立窗口**（拖动时有跟随鼠标的小预览）；又拖回标签栏里松开则取消，只是普通重排。
-- 拖到**另一个窗口的标签栏**上松手 → 直接并进那个窗口；窗口重叠时按 Z 序取「鼠标下真正看得见的那一个」。
-- **文档不复制**：画布、撤销栈、笔画、PDF 句柄、批注、阅读进度、搜索状态整份搬过去，搬完接着写、接着读；搬标签**不弹**「是否保存」（它不是关闭）。
-- 源窗口不会空掉：搬走最后一个标签时自动补一个空白笔记（与浏览器一致）；只剩一个标签时不许拖出（会提示先新建一个）。
-- 换窗口时画布**重新接线**：信号与「连续阅读切页」回调都改指向新窗口 —— 否则画布会继续去叫已经搬空的旧窗口。
-- 多窗口配套：所有快捷键改用 `WindowShortcut`（`ApplicationShortcut` 会被多个窗口同时注册，Qt 判为 ambiguous 而**全部失灵**）；会话在**最后一个窗口关闭时**统一记录所有窗口的标签；窗口几何只跟随主窗口。
-
-### 验证
-
-- 新增 `tests/test_ui_layout.py` **16 例**：最小宽度合理、核心组任何宽度都不被收起、溢出只吃优先级最低的尾部、成组同进同退、× 存在且**点击真的能关标签**、切主题后 × 图标不丢、侧边栏自动折叠 / 手动优先 / 宽度记忆、窄窗口隐藏坐标。
-- 新增 `tests/test_tab_detach.py` **12 例**：拖出后是同一个文档（同一画布、笔画数不变）、源窗口不多补空白标签、最后一个标签拒绝拖出、搬标签不弹保存、拖到别的窗口会合并、拖出/栏内两种手势、画布回调与信号改指向新窗口、会话涵盖所有窗口。
-- 真字体离屏截图逐档目视确认：1600 / 1280 / 1100 / 980 / 900 / 820 / 760 / 720。
-- 关键数字：窗口最小宽度 **1873 → 720**；顶栏核心组最小 **553px**；1600px 宽下 **0** 个控件进溢出。
-
----
-
-## v5.1：常用色快捷盘 + 触控笔圆圈反馈
-
-### 1. 换颜色从「四步」变成「一步」
-
-| 之前 | 现在 |
-| --- | --- |
-| 点色块 → 弹出完整调色板（取色器 / 色轮 / HSV / 十六进制 / 透明度）→ 找到颜色 → 点确定 | 点色块 → **一屏常用色，单击即换**；键盘 `1`~`9` 也行 |
-
-- 新增 `src/ui/color_palette.py`：`SwatchGrid`（自绘色块网格：圆角块、悬停描边、当前色打勾，半透明色按卡片底色合成显示）+ `ColorPalettePopup`（常用色 / 最近使用 / **更多颜色…** / 恢复默认色）。
-- 色盘随工具切换：**钢笔 12 色**（黑 / 深灰 / 红 / 橙 / 黄 / 绿 / 青 / 蓝 / 靛 / 紫 / 棕 / 白，6 × 2 一屏），**荧光笔 8 色**（40% 不透明）。色盘数据在 `src/core/colors.py`，UI 只负责绘制与交互。
-- **最近使用**最多记 8 个，钢笔与荧光笔各记一份（`AppSettings.recent_colors`），跨会话保留。
-- 完整调色板仍然在，只是降级为弹窗底部的「更多颜色…」；从那里选的不透明色用于荧光笔时会自动补上默认透明度，不会像以前那样一不小心选成实心块。
-- 颜色是全局样式（跟人走）：一次换色同步所有标签的画布；橡皮激活时换色落在钢笔上（橡皮没有颜色）。
-- 未选中任何颜色时按 `Esc` 关闭，弹窗不会挡住画布——它出现在色块正下方。
-
-### 2. 触控笔的「圆圈特效」：保留，但不再频繁触发
-
-那个跟着触控笔/手指出现的半透明圆圈**不是本程序画的**，是 **Windows 画在窗口上的系统反馈**（触点可视化 / 轻点反馈 / 长按圆环）。所以它在源码里找不到，也只能按 Windows 的方式关。
-
-- 新增 `src/ui/win_feedback.py`：用 `user32!SetWindowFeedbackSetting` **按窗口**开关反馈类型，只影响本程序的窗口，不改系统全局设置，也不影响别的程序。
-- 默认策略 **`quiet`**：关掉「书写时几乎每次落笔都会闪」的三类 —— 触点可视化、触摸轻点、触控笔轻点；**保留长按 / 右键这类刻意操作才出现的反馈** —— 圆圈特效还在，只是不再频繁触发。
-- 视图菜单新增「**触控笔圆圈反馈（系统）**」：安静（推荐）/ 完全关闭 / 系统默认，选择持久化到设置。
-- 窗口每次显示、以及 Qt 重建原生窗口（`WinIdChange`）时都会重新下发，避免设置丢失；非 Windows 或系统不支持时是**安全的空操作**。
-
-实测（真实窗口句柄，本机）：11 种反馈类型 on / off / clear 全部返回成功，非法类型返回失败；`quiet` 下发 3 条、`off` 下发 11 条、`system` 清除 11 条。
-
-### 3. 构建产物收敛回 `dist/`（顺带修掉一个隐患）
-
-清理历史构建前做的依赖检查发现：`cleanup_old_versions.py` 的保护名单是 `dist` / `build`，
-而当时**在用的**交付物却是临时的 `dist_v5/` —— 也就是说再跑一次清理脚本，会把正在用的程序送进回收站
-（与上次「文件被误删」同源）。因此：
-
-- 重新打包到规范路径 `dist/`，删掉历史产物 `dist_v5/`、`build_v5/`，桌面快捷方式改指 `dist/`。
-  （写桌面 `.lnk` 需要工作区外的权限，收尾时先用了一个临时目录联接 `dist_v5 -> dist` 让旧快捷方式保持可用；
-  跑一次 `python make_shortcut.py` 把快捷方式直接指到 `dist/` 后，这个联接即可删除。）
-- `cleanup_old_versions.py` 新增保险：**`dist/` 不存在却存在 `dist_*` 时默认跳过后者**（避免把交付物当历史版本清掉），要强行清理需显式 `--force`。
-- `probe_v5.py` 不再写死 `dist_v5` 路径，改为复用 `make_shortcut.find_target()`（取 exe 最新的 `dist*/`）。
-- `make_shortcut.py` 的文档描述改成与实际行为一致：**取 exe 最新的 `dist*/`，而不是无条件优先 `dist/`**（后者曾是「快捷方式指向旧版本」的真实事故）。
-
----
-
-## v5：浏览器式多标签（笔记与 PDF 任意混开）
-
-| 能力 | 说明 |
-| --- | --- |
-| 多标签 | 多个笔记、多个 PDF、笔记与 PDF 混合，同时打开 |
-| 即时切换 | 每标签独占画布，切换 O(1)，页码/缩放/滚动/撤销栈全部保留 |
-| 状态隔离 | 笔画、页码、缩放、背景色、未保存标记互不干扰 |
-| 去重打开 | 同一文件再打开时切到已有标签，不开成两份 |
-| 标签快捷键 | `Ctrl+T` / `Ctrl+W` / `Ctrl+Tab` / `Ctrl+1..9` / `Ctrl+Shift+T` |
-| 标签交互 | 拖拽重排、中键关闭、双击空白新建、右键菜单、右上角 `＋` |
-| 会话恢复 | 退出记住打开的标签，下次启动自动恢复（失效文件跳过） |
-| 资源回收 | 关闭标签即释放 fitz 句柄与线程；切走的标签只留 3 页渲染缓存 |
-
-**实现要点**
-
-- `src/core/document_tab.py`：`DocumentTab` 持有文档对象、路径、`dirty`、页码、搜索状态与自己的 `PageCanvas`。`release()` 按「停搜索线程 → 画布脱离 PDF → 关闭 fitz 文档」的顺序释放，顺序反了会让后台渲染线程访问已关闭的文档而崩溃。
-- **属性代理**：`MainWindow` 上的 `mode` / `note_doc` / `pdf_engine` / `canvas` / `current_page` / `dirty` / 搜索状态全部是 property，代理到「当前标签」。单文档时代写好的业务逻辑几乎不用改，同时从根本上杜绝「操作 A 却写到 B」。
-- **异步不串台**：搜索回调带 `tab_id`，标签已关闭则丢弃结果；画布信号全部带来源 `canvas`，只有来自当前标签的信号才允许刷界面。
-- **工具样式跟人走**：笔色 / 笔宽 / 当前工具是全局设置，切换标签时推给目标画布，手感一致。
-- **快捷键冲突**：浏览器习惯的 `Ctrl+1..9`（切换标签）与原视图快捷键冲突，把「实际大小」改为 `Ctrl+Shift+1`、「适应宽度」改为 `Ctrl+Shift+9`。
-- **新建标签的初始化顺序**：首个标签必须在工具栏之前建好（工具栏按钮要引用 `self.canvas`），因此相关同步函数在状态栏/工具栏尚未创建时会提前返回，装载完成后再同步一次。
-
-## v4.2：阅读性能 + 连续阅读 + 阅读进度恢复
-
-### 1. 打开 PDF 更快
-
-| 优化 | 之前 | 现在 |
-| --- | --- | --- |
-| **MD5 按需计算** | `PdfEngine.__init__` 里无条件把整份文件读一遍算 MD5 | 只有「需要和已有 `.annot` 比对」或「保存批注」时才算；并用 `(路径, 大小, 修改时间)` 缓存，命中即跳过 |
-| **缩略图懒加载** | 打开时一次性创建全部页面的缩略图控件，并把所有页丢给线程池 | 只为当前页附近一段（默认 60 页）建控件，滚动时再补；渲染任务只提交当前页前后约 16 页 |
-| **缩略图线程复用文档** | 每个缩略图任务都 `fitz.open()` 一次（300 页 = 300 次解析） | 每个工作线程复用一个文档句柄，切换文档才重开 |
-| **页面尺寸缓存** | 每帧都访问 `doc[i].rect` | `PdfEngine.page_size` 带缓存（连续阅读每帧都要用） |
-| **相邻页预取** | 翻页要等渲染 | 当前页渲染完成后后台预取下一页（只预取一层，不会连锁渲染整本） |
-
-实测（offscreen，本机）：
-
-| 场景 | 优化前 | 优化后 |
-| --- | --- | --- |
-| 200 页文本 PDF，`open_pdf` 到可交互 | 0.134 s | **0.034 s** |
-| 26.6 MB / 40 页图片 PDF，连续打开 3 次 | 0.27 → 1.26 → 1.15 s（与缩略图线程抢 CPU，越开越慢） | **0.06 / 0.13 / 0.06 s** |
-| 26.6 MB 文件的全量 MD5（现在默认跳过） | 约 0.04 s（缓存热）～1.3 s（冷读） | 0 |
-
-> 关键点：缩略图线程数固定为 4，但**一次只喂给它十几页**。之前一次提交几百页，
-> 4 个线程同时解码大图，会把主线程的打开/翻页一起拖慢。
-
-### 2. 连续阅读 / 单页阅读
-
-- 画布新增 `read_mode`（`single` / `continuous`）与一套纵向布局（`_ensure_layout`：逐页累计页顶坐标，缩放 / 旋转 / 页数变化自动失效重算）。
-- 连续模式按**视口裁剪**绘制：只画看得见的页（图像取自 LRU 缓存，缺页时异步请求并显示白页占位）；批注按「页内坐标 → 该页变换」逐页叠加，因此多页批注可以同屏显示。
-- 滚动时**视口中线所在的页自动成为「当前页」**——页码、缩略图高亮、目录高亮、搜索高亮全部跟随；在任意一页上落笔会自动把批注绑定切到该页。
-- 缩放的锚点在连续模式下同样精确：先记住锚点属于哪一页的哪个位置，重排布局后再把它放回光标处（否则缩放会跳页）。
-- 单页模式保持原有行为完全不变（`rebuild_pixmap` + 离屏整页缓存）。
-
-### 3. 阅读进度恢复
-
-- `AppSettings` 新增 `pdf_read_state`：按文档路径记录 `{page, mode, scroll, size, mtime}`（最多 200 条，LRU 淘汰）。
-- 打开 PDF 时若「大小 + 修改时间」与记录一致，直接恢复到那一页（连续模式还会恢复滚动位置）；不一致则从第 1 页开始——文件被替换后不会跳到错误的页。
-- 翻页 / 滚动时**节流 1.2 秒**写盘；关闭文档与关闭窗口时立即写盘。
-
-### 4. 验证
-
-- 测试 51 → **64 个**（新增 `tests/test_reading_modes.py` 13 个：跳过 MD5、命中 MD5 缓存、缩略图懒加载、模式切换、滚动跟随、多页缓存、缩放锚点、旋转+搜索、切回笔记复位、重开到上次页、恢复连续模式与滚动位置、文件变更后忽略旧进度）。
-- `smoke_v4.py` 9 项全过；连续模式还做了像素级验证（截图里能看到「页 → 灰缝 → 下一页」的堆叠特征，单页模式只有底部留白）。
-
----
-
-## v4.1：环境修复 + 荧光笔 + 工程化迭代
-
-### 1. 修复「文件被误删 / 结构损坏」造成的不可用状态
-
-| 问题 | 现象 | 处理 |
-| --- | --- | --- |
-| 桌面快捷方式失效 | `.lnk` 还在，但目标字段为空，双击无反应 | 重写快捷方式（COM 创建 + 二进制回退），指向新的 `dist\` 产物 |
-| 打包产物缺失 | README 记录的 `dist\手写笔记本与PDF批注\` 被清理脚本送进了回收站 | 重新打包到 `dist\`，并验证 exe 能启动 |
-| 残留空目录 | `dist_prev_v31\`、`dist_old_build_old\` 内容已被清空，只剩空壳 | 删除空壳 |
-| 缓存目录 ACL 损坏 | `.pytest_cache\` 无权限访问，pytest 反复告警 | 配置 `cache_dir = build/.pytest_cache` 绕开坏目录 |
-| 开发环境丢失 | 环境里没有 PyMuPDF / pytest，测试完全跑不起来 | 用 uv 重建 `.venv`（PySide6 6.11.2 + PyMuPDF 1.28.2 + pytest 9.1.1 + PyInstaller 6.22.2） |
-
-> 核查结论：`src/`、`tests/` 的源码**没有丢失**（逐一核对过导入关系、PyInstaller 构建清单
-> 与回收站记录）；被误删的是**构建产物与开发环境**，外加一个失效的快捷方式。
-
-### 2. 真实缺陷修复
-
-| # | 问题 | 修复 |
-| --- | --- | --- |
-| 1 | **窗口未走 `closeEvent` 时线程泄漏**：`ThumbnailPool` 的 4 个常驻线程只在 `MainWindow.closeEvent` 里停，窗口被回收或进程退出时会打印 `QThread: Destroyed while thread is still running` | `ThumbnailPool` 监听父对象 `destroyed` 自动 `shutdown()`；`shutdown()` 幂等，关闭后 `submit()` 变为空操作 |
-| 2 | **受限环境跑不了测试**：`tempfile.mkdtemp()` 以 `0o700` 建目录，在带文件访问控制的沙箱里生成的 ACL 连创建者都进不去 | 新增 `env_compat.py`：探测到不可写时替换 `mkdtemp` 并修正 `Path.mkdir` 的 `0o700`；普通环境零副作用 |
-| 3 | **PyMuPDF 废弃警告**：全项目 `import fitz` 会打印 `The fitz API is deprecated` | 统一改为 `import pymupdf as fitz`（PyMuPDF 1.24+ 官方包名），`build.spec` 同步更新 |
-| 4 | 未使用的导入（`time` / `TOOL_PEN` / `Dict` / `QColor` / `QTransform`） | 清理 |
-
-### 3. 新功能：荧光笔
-
-- 新增 `src/tools/highlighter.py`，通过 `register_tool` 注册 → **工具栏按钮、工具菜单、`H` 快捷键自动出现**，画布与主窗口一行未改（验证了扩展点确实可用）。
-- 半透明颜色（Qt 的 `#AARRGGBB`）：默认琥珀黄 40% 不透明；荧光笔的颜色对话框开启 Alpha 通道，选完颜色仍保留半透明。
-- 等宽：忽略压感，标记粗细始终一致（真实荧光笔的行为）。
-- 导出 PDF 时先把笔画画到透明 RGBA 图层再与底图合成，**半透明被正确保留**（旧实现按前 6 位当 RGB 解析，会画成实心色块盖住原文）。
-- 笔宽滑块与颜色块随当前工具切换，并各自持久化。
-
-### 4. 工程化
-
-- 新增 `pyproject.toml`（pytest `testpaths` / `cache_dir`），`pytest` 直接可跑、无告警。
-- 测试从 45 个增加到 **51 个**（新增荧光笔 6 个用例）；`smoke_v4.py` 9 项全过。
-
----
-
-## 本次更新（v2 关键修复）
-
-- **修复「鼠标无法书写」**：原来的 `_using_tablet` 标志在某些 Windows 触控笔 / 触摸板机型上会因「按下走 tablet 事件、松开走 mouse 事件」而卡死，导致所有鼠标绘制被忽略。现改为鼠标 / 触控笔双通道互斥（`_active_device` 机制），且只把「真实手写笔 / 橡皮」交给 tablet 通道、鼠标类型回退到鼠标通道，并在松开 / 失焦时安全复位，彻底避免卡死。同时补全了 `mousePressEvent` / `mouseMoveEvent` / `mouseReleaseEvent` 与坐标映射（`position()` 兼容 Qt6 不同版本）。
-- **修复「PDF 滚轮方向反了」**：原来 `offset.y() -= angleDelta.y()` 与 Windows / Adobe 习惯相反。现改为 `offset.y() += angleDelta.y()`，向上滚查看页面上方、向下滚查看下方，且笔记与 PDF 两种模式行为统一；`Ctrl+滚轮` 仍仅用于缩放。
-- **修复「缩略图横排挤在一起」**：原 `QListWidget.IconMode` 会把所有页面横向平铺。现改为每页一个独立条目（竖向 `QScrollArea` + 缩略图 + 「第 N 页」标签），当前页高亮、点击跳转、PDF 缩略图异步加载不卡 UI。
-- **现代 Agent 风格 UI**：新增 `src/ui/theme.py`（浅色 / 深色 QSS + 内嵌 SVG 图标，样式与逻辑分离）；左侧可折叠侧边栏（新建 / 最近文件 / 缩略图）、顶部工具栏（图标 + 提示）、底部状态栏、一键主题切换，扁平圆角、主色 `#10a37f`。
-- **兼容性**：适配 PySide6 6.11 / Qt6（用 `position()` 替代已移除的 `posF()`，图标回落到本环境存在 `SP_*` 标准图标或内嵌 SVG）。
-
----
-
-## v3.1 修复：连续打开 PDF 显示上一个文档的内容
-
-**现象**：打开 PDF A → 再打开 PDF B（哪怕 B 是另一份文件），画布显示的却是 A 的页面。
-
-**根因**：PDF 页面渲染缓存键为 `(页序号, 缩放)`，**不含文档标识**。绝大多数 PDF 都是
-A4（595×842 pt），因此打开第二个 PDF 时缩放相同、缓存键相同，直接命中了上一个文档
-的缓存图像。第 1 页永远先被渲染，所以「每次打开新 PDF 看到的都是上一个 PDF 的第一页」。
-
-**修复**（`src/ui/canvas.py` + `src/ui/main_window.py`）：
-1. 缓存键改为 `(文档标识, 页序号, 缩放)`；文档切换时清空缓存并作废在途渲染结果。
-2. 新增 `canvas.detach_pdf()`：切换/关闭前**先等在途渲染线程结束**再释放 fitz 文档，
-   避免线程访问已关闭文档而崩溃。
-3. 新增 `MainWindow._close_current_pdf()`：打开新 PDF / 切回笔记 / 退出时统一走它，
-   旧的 `PdfEngine` 会被真正关闭（此前一直泄漏，且 Windows 下会锁住原 PDF 文件无法删除）。
-4. 打开新文档时重置缩放策略（自动适应视口），不再沿用上一个文档的缩放。
-5. `open_pdf` 全程 try/except，出错弹窗而非半打开状态；批注页数与 PDF 页数强制对齐。
-
-**回归测试**：`tests/test_pdf_switch.py`（两个同尺寸 PDF 连续打开 + 打开 PDF 后切回笔记释放资源）。
-
-## v3 自主重构：修复缺陷 + 扩展接口
-
-### 修复的真实缺陷
-
-| # | 问题 | 修复 |
-|---|------|------|
-| 1 | **橡皮会把 PDF 原文涂白**：橡皮笔画直接以白色画进画布，在 PDF 上等于破坏原文；且未命中笔画时不重绘，白色痕迹残留 | 橡皮 `paints_live=False`，只在光标处画提示圈，抬笔才真正删除；按返回值决定是否重绘 |
-| 2 | **抬笔瞬间笔画「变形」**：书写用直线段、重绘用平滑曲线，两者不一致 | 增量绘制与最终路径共用同一套二次贝塞尔公式（`stroke_painter`），现在完全一致 |
-| 3 | **压感只采集、从不渲染** | 按段绘制时线宽随压感变化 |
-| 4 | **页面会被滚出视口找不回来**：平移/滚轮无边界 | `_clamp_offset()` 保证页面始终有 ≥35% 留在视口内 |
-| 5 | **只能纵向滚动** | 新增 `Shift+滚轮` 横向平移 |
-| 6 | **300 页 PDF 会创建 300 个线程** | 改为 4 线程有界池 + 任务队列，支持批次取消（切换文档时丢弃过期结果） |
-| 7 | **渲染缓存任意淘汰** | 改为 LRU（`OrderedDict`） |
-| 8 | **重构时丢失了「添加页 / 删除页」按钮** | 侧边栏与「编辑」菜单均已补回，PDF 模式下自动禁用 |
-| 9 | **每次保存弹模态框打断书写** | 改为状态栏临时提示（仅出错才弹窗） |
-| 10 | **打开最近文件会丢未保存的更改** | 打开前先走「是否保存」确认 |
-| 11 | **主题 / 工具 / 笔宽等偏好重启即失效** | 统一由 `core/settings.py` 持久化（含窗口几何） |
-| 12 | 数位板笔尾橡皮不生效 | 检测到 `Eraser` 指针时自动临时切换工具，抬笔还原 |
-
-### 新增的人机功效
-
-- 快捷键：`B` 钢笔、`E` 橡皮、`Ctrl+0` 适应页面、`Ctrl+K` 清空当前页、`[`/`]` 可配合滑块调笔宽。
-- 笔宽滑块**跟随当前工具**：选中橡皮时调的是橡皮大小。
-- 画布加了纸张投影与边框，页面像一张纸浮在背景上。
-- `Esc` 可取消正在书写的笔画。
-
-### 扩展接口：新增一个工具
-
-画布不依赖任何具体工具，新增工具**不需要改动画布或主窗口**：
-
-```python
-# my_tool.py
-from PySide6.QtCore import Qt
-from src.core.stroke import AddStrokeCmd, Stroke
-from src.tools import register_tool
-from src.tools.base import Tool
-
-
-class HighlighterTool(Tool):
-    id = "highlighter"          # 唯一标识
-    name = "荧光笔"              # 界面显示名
-    cursor = Qt.CrossCursor
-    paints_live = True          # True=手势中实时留痕；False=只显示光标（如橡皮）
-
-    def begin(self, ctx, pt):
-        # pt = (x, y, pressure)，坐标为「页面 points」
-        self.current_stroke = Stroke(tool="pen", color="#ffff00",
-                                     width=18.0, points=[pt])
-
-    def move(self, ctx, pt) -> bool:
-        self.current_stroke.points.append(pt)
-        return True             # 返回 True 表示追加成功（画布会增量重绘）
-
-    def end(self, ctx, pt) -> bool:
-        ctx.undo.push(AddStrokeCmd(self.current_stroke))  # 可撤销
-        ctx.notify_modified()                             # 触发保存标记/缩略图刷新
-        self.current_stroke = None
-        return True
-
-    # 可选：光标提示（CSS 坐标）
-    # def paint_overlay(self, painter, ctx, css_pos, scale): ...
-
-
-register_tool(HighlighterTool)   # 之后工具栏与「工具」菜单会自动出现该工具
-```
-
-可用的上下文能力（`ToolContext`）：`strokes`（当前页笔画列表）、`undo`（撤销管理器）、
-`page_w/page_h`、`scale`，以及回调 `request_rebuild()` / `request_update()` / `notify_modified()`。
-
-其它扩展点：
-- `render/stroke_painter.py`：替换笔迹渲染算法（如改为矢量轮廓、毛笔笔锋）只需改这一处。
-- `ui/theme.py`：调整配色/圆角/字体；新增主题只需在 `THEMES` 与 `_palette()` 中加一套。
-- `core/settings.py`：新增持久化偏好项。
-
----
-
-## 已知限制 / 后续可扩展
-
-- 橡皮为「对象级擦除」（整条命中笔画被删除），未实现笔画内部局部擦除。
-- 笔记导出为「页面光栅化后写入 PDF」，因此导出的是图片 PDF（批注为像素）；如需矢量批注可改用 PyMuPDF 的 `Shape` 绘制。
-- 压感需要有 `QTabletEvent` 支持的设备（数位板 / 触控笔）；纯鼠标压感恒为 1.0（v3 起压感会真实渲染为变宽笔迹）。
-- 手写时按「增量绘制」保证低延迟，因此抬笔后不会立即全页重绘（仅在撤销/重做/擦除/翻页时重绘）；由于增量与最终路径公式一致，外观无差异。
-- 荧光笔与钢笔一样是「对象级」的：橡皮会把整条荧光笔标记删除，未实现笔画内部局部擦除。
+## 已知限制
+
+- 橡皮为「对象级擦除」（整条命中笔画被删除），未实现笔画内部局部擦除；荧光笔同理。
+- 笔记导出为「页面光栅化后写入 PDF」，因此导出的是图片 PDF（批注为像素）；如需矢量批注可改用
+  PyMuPDF 的 `Shape` 绘制。
+- 压感需要有 `QTabletEvent` 支持的设备（数位板 / 触控笔）；纯鼠标压感恒为 1.0。
+- 手写时按「增量绘制」保证低延迟，抬笔后不会立即全页重绘（仅在撤销 / 重做 / 擦除 / 翻页时重绘）；
+  由于增量与最终路径公式一致，外观无差异。
 - 偏好设置默认存注册表 `HKCU\Software\WorkBuddy\HandwritingNotebook`；写不进去（受限环境 / 只读策略）时
-  **自动改用 INI 文件**（候选链与开关见「第三处修复：设置写不进去」），偏好不再静默丢失；注册表不可用会在
-  `%LOCALAPPDATA%\手写笔记本与PDF批注\registry-unavailable.flag` 留标记，下次启动不再反复探测。
-- 批注兜底位置：PDF 旁边写不了时会退到**候选链里第一个真的能建文件的目录**（`%LOCALAPPDATA%\手写笔记本与PDF批注\annotations\`
-  是链上的历史位置），可用环境变量 `HN_ANNOT_DIR` 显式指定；打开时按同一顺序找回，位置定下来后沿用、不在「旁边 / 兜底」之间来回跳
-  （判定见 `src/core/annot_store.py`）。
-- 阅读位置：再次打开同一份 PDF 会回到上次读到的那一页（连续模式连滚动位置一起恢复）；文件「大小 / 修改时间」变了就从头开始。
-  这条与 Episode1（`handwriting-notebook/`，已冻结）**行为一致**：Episode1 再次打开同一份 PDF 也是回到上次阅读位置，**不会打开成空文件**。
-- 回退：桌面「手写笔记本与PDF批注.lnk」现已指向 Episode2（源码版）；Episode1 的 exe 仍在 `handwriting-notebook\dist\`
-  （`5.2.2.0`，未删），双击备份快捷方式 `手写笔记本与PDF批注.Episode1备份.lnk` 即可回退。启动器 `episode2\run_episode2.cmd`
-  仍保留 `console`（看报错）/ `shortcut`（重建快捷方式）子命令，见「运行」一节；上面的保存位置改动只在 Episode2 生效。
-- **无头 / offscreen 自动化的坑**：`_load_pdf_into_tab()` 里的「批注不匹配」提示（`QMessageBox.warning`，MD5 不一致）是**模态框**，无头跑回归时会
-  **永久挂住脚本**（产品行为本身是合理的）。做无头回归时给这个提示加钩子（自动确认），或每轮都用全新目录。
+  **自动改用 INI 文件**，偏好不会静默丢失。
+- 批注兜底位置：PDF 旁边写不了时会退到候选链里第一个可写的目录，可用 `HN_ANNOT_DIR` 显式指定。
+- 阅读位置：再次打开同一份 PDF 会回到上次读到的那一页；文件「大小 / 修改时间」变了就从头开始。
+- **无头 / offscreen 自动化的坑**：批注 MD5 不匹配时的确认框是**模态**的，无头跑回归时会永久挂住脚本，
+  需给提示加钩子自动确认，或每轮使用全新目录。
+- `v2` 二进制文件**旧版本程序读不了**（magic 不匹配会明确报错而非画花）；需要与旧版本交换文件时
+  用 `save(path, version=1)` 写回 JSON。
 
 ---
 
-## 性能（路线 A 实施中）
+## 性能
+
+以下为路线 A（Python 侧优化）的前后对比实测数据：
 
 | 指标 | 改前 | 现在 | 说明 |
 |---|---:|---:|---|
-| 1000 笔画整页重建（dpr 1.0） | 1.042 s | **0.222 s** | A1：压感笔画改为变宽轮廓一次填充（**4.7x**） |
-| 1000 笔画整页重建（dpr 1.5，即 150% 缩放屏） | 1.33 s | **0.314 s** | 真实像素量（1330×1881） |
-| 500 笔画整页重建（dpr 1.0） | 0.526 s | **0.111 s** | 同上 |
-| 单笔撤销/擦除重绘（1000 笔画页） | 整页重建 103 ms | **1.04 ms** | A2：脏矩形增量重绘（真实手写长度；最坏情况长笔画 20 ms） |
-| 点数 / 文件体积（200 笔画页） | 90.5 点/笔 · 1.80 MB | **8.1 点/笔 · 0.19 MB** | A3：采样 1.2 pt + 抬笔 RDP 0.35 pt（-91%，合成笔迹） |
-| `.note` 1 页 × 1000 笔画（120 点/笔） | 11.9 MB | **1.10 MB**（10.8x） | A4：v2 二进制容器；save 0.430 → **0.047 s** |
-| `.note` 50 页 × 200 笔画 | 118.7 MB | **11.0 MB** | A4：save 4.78 → **0.42 s**，且写盘在后台线程（不阻塞界面） |
-| `dist` 体积 | 684.8 MB / 3695 文件 | **113.1 MB / 202 文件** | A5：白名单裁剪 + `optimize=1`（6.1x） |
-| 冷启动（新进程、热缓存） | 0.542 s | **0.393 s** | A6：PyMuPDF 惰性导入 + 缩略图线程池惰性启动 |
+| 1000 笔画整页重建（dpr 1.0） | 1.042 s | **0.222 s** | 压感笔画改为变宽轮廓一次填充（4.7x） |
+| 1000 笔画整页重建（dpr 1.5） | 1.33 s | **0.314 s** | 真实像素量（1330×1881） |
+| 500 笔画整页重建（dpr 1.0） | 0.526 s | **0.111 s** | |
+| 单笔撤销/擦除重绘（1000 笔画页） | 整页重建 103 ms | **1.04 ms** | 脏矩形增量重绘（最坏情况长笔画 20 ms） |
+| 点数 / 文件体积（200 笔画页） | 90.5 点/笔 · 1.80 MB | **8.1 点/笔 · 0.19 MB** | 采样 1.2 pt + 抬笔 RDP 0.35 pt（-91%） |
+| `.note` 1 页 × 1000 笔画 | 11.9 MB | **1.10 MB**（10.8x） | v2 二进制容器；save 0.430 → **0.047 s** |
+| `.note` 50 页 × 200 笔画 | 118.7 MB | **11.0 MB** | save 4.78 → **0.42 s**，且写盘在后台线程 |
+| `dist` 体积 | 684.8 MB / 3695 文件 | **113.1 MB / 202 文件** | 白名单裁剪 + `optimize=1`（6.1x） |
+| 冷启动（新进程、热缓存） | 0.542 s | **0.393 s** | PyMuPDF 惰性导入 + 缩略图线程池惰性启动 |
 
-- 基准脚本在 `tests/benchmarks/`（真机整页重建 / 微基准 / 增量重绘 / 存储 / 采样简化 / 冷启动，
-  全部支持 `--json`），口径见该目录的 README；`tests/test_perf_budget.py` 是防退化闸门
-  （`HN_PERF_SCALE` 放宽、`HN_SKIP_PERF=1` 跳过）。
-- **A1 的回退开关**：`HN_PRESSURE_OUTLINE=0` 回到旧的逐段 `drawLine` 渲染。
-- **A1 已知外观差异**：两点笔画若两端压感差别大，现在画成楔形（旧实现按两端平均宽度画成等宽）；
-  真实数位板一次点划也会给出多个采样点，属边缘情况。见 `tests/test_pressure_render.py`。
-- **A3/A4 的文件兼容性**：v2 二进制文件**旧版本程序读不了**（magic 不匹配会明确报错而非画花）；
-  需要与旧版本交换文件时用 `save(path, version=1)` 写回 JSON。
-- 进度与逐项前后数据记在 [ROADMAP.md](ROADMAP.md) §11。
+Rust 核心的对拍与基准数据见 [EPISODE2.md](EPISODE2.md) 与 `bench_backend_result.json`。
+
+---
+
+## 贡献
+
+欢迎提交 Issue 与 Pull Request。开发环境、构建步骤与提交规范见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+提交前请确保：
+
+```bash
+ruff check
+pyright
+pytest -q
+```
+
+---
+
+## 许可证
+
+本项目以 **GNU Affero General Public License v3.0（AGPL-3.0）** 发布，详见 [LICENSE](LICENSE)。
+
+因依赖 PyMuPDF（AGPL-3.0），本项目的**任何分发与网络服务**均须遵守 AGPL-3.0 的开源义务：
+若你将本项目（或其修改版）作为网络服务对外提供，也必须向使用者开放完整源码。
+
+第三方组件许可见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
