@@ -35,11 +35,12 @@ class TabOpsMixin:
     def _activate_tab(self, tab: DocumentTab) -> None:
         self._switch_to_tab(tab)
     def _switch_to_tab(self, tab: Optional[DocumentTab]) -> None:
-        """切换当前标签：保存旧的阅读进度 → 换画布 → 同步整个界面。"""
+        """切换当前标签：记住旧位置/保存进度 → 换画布 → 同步界面 → 校对视图。"""
         if tab is None or tab.canvas is None:
             return
         old = self._active
         if old is not None and old is not tab:
+            self._remember_view(old)        # 先记「看到哪儿」再写盘（顺序一起见 _save_read_state）
             self._save_read_state(old)
             self._trim_idle_cache(old)
         self._active = tab
@@ -48,6 +49,10 @@ class TabOpsMixin:
         self._apply_tool_settings_to(tab.canvas)
         tab.canvas.setFocus()
         self._sync_ui_from_tab(tab)
+        if old is not tab:
+            # 只有「真的换了标签」才校对视图：同一个标签再同步一次界面
+            # （例如又点了一次已打开的文件）不该把用户刚翻到的页拉回去。
+            self._restore_view(tab)
     def _sync_ui_from_tab(self, tab: DocumentTab) -> None:
         """把侧边栏 / 工具栏 / 状态栏全部刷新成「这个标签」的样子。"""
         canvas = tab.canvas
@@ -59,7 +64,13 @@ class TabOpsMixin:
         # 文档还没装载完（新建标签的瞬间）就先不刷界面，装载完会再同步一次
         if tab.note_doc is None and tab.pdf_engine is None:
             return
-        tab.page = canvas.current_index
+        if tab.is_pdf:
+            tab.page = canvas.current_index
+        else:
+            # 笔记的页码由笔记自己说了算：无条件拿画布的 current_index 会把
+            # 「翻到第 5 页」写回第 1 页（旧画布从来不更新这个字段）。
+            canvas.current_index = int(tab.page)
+            canvas.total_pages = max(1, tab.page_count())
 
         if tab.is_note and tab.note_doc is not None:
             self.side_title.setText("笔记本")
@@ -115,6 +126,43 @@ class TabOpsMixin:
         # 会话恢复都走这条路，缺了这一手界面会一直停在上一个标签的页码上
         self._sync_page_ui(tab)
         self._update_window_title()
+    def _remember_view(self, tab: Optional[DocumentTab]) -> None:
+        """切走前把「现在看到哪儿」记到标签上（PDF 记滚动比例，笔记记页码）。
+
+        画布自己的 offset 不一定可靠：标签在后台被 resize 过、渲染缓存被回收过，
+        都可能让 `fit_to_view()` 重新摆位。标签上这份记忆是「用户真正看到的位置」。
+        """
+        if tab is None or tab.canvas is None:
+            return
+        if tab.note_doc is None and tab.pdf_engine is None:
+            return
+        try:
+            if tab.is_pdf:
+                tab.view_page = int(tab.canvas.current_index)
+            else:
+                tab.view_page = int(tab.page)
+            tab.view_frac = float(tab.canvas.scroll_offset_frac())
+        except Exception:            # pragma: no cover - 防御性
+            pass
+    def _restore_view(self, tab: Optional[DocumentTab]) -> None:
+        """切回来时把视图校对回记忆里的位置（没被动过就什么都不做）。"""
+        if tab is None or tab.canvas is None or tab.view_page is None:
+            return
+        canvas = tab.canvas
+        page = max(0, min(int(tab.view_page), max(0, tab.page_count() - 1)))
+        if tab.is_note and tab.note_doc is not None:
+            if int(tab.page) != page or int(canvas.current_index) != page:
+                self._show_page_note(page, tab=tab)
+            return
+        if tab.pdf_engine is None:
+            return
+        if int(canvas.current_index) != page or int(tab.page) != page:
+            self._show_page_pdf(page, scroll=True, tab=tab)
+        if canvas.read_mode == "continuous":
+            want = float(tab.view_frac or 0.0)
+            if want > 0.0 and abs(canvas.scroll_offset_frac() - want) > 0.002:
+                canvas.restore_scroll_frac(want)
+        canvas.update()
     def _trim_idle_cache(self, tab: DocumentTab) -> None:
         """切走的标签只保留少量渲染缓存，避免开很多 PDF 后内存无限增长。
 
@@ -292,6 +340,10 @@ class TabOpsMixin:
             del self._closed[:-20]
 
         canvas = tab.canvas
+        # 关标签前先落盘：释放之后 pdf_engine / note_doc 都没了，写不进进度，
+        # 「关掉再从最近文件打开」就会回到上一次写盘的位置（看起来像没记住）。
+        self._remember_view(tab)
+        self._save_read_state(tab)
         tab.release()          # 停搜索线程 → 画布脱离 PDF → 关闭 fitz 文档
         if canvas is not None:
             canvas.setParent(None)

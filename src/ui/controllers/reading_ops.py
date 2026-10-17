@@ -24,16 +24,30 @@ _log = get_logger("ui.reading")
 
 
 class ReadingOpsMixin:
-    def _show_page_note(self, index: int) -> None:
-        doc = self.note_doc
-        if doc is None:
+    def _show_page_note(self, index: int,
+                        tab: Optional[DocumentTab] = None) -> None:
+        """把笔记翻到第 index 页（`tab` 缺省为当前标签）。
+
+        必须能指定标签：会话恢复 / 切标签时是在**后台标签**上翻页的，
+        用 `self.note_doc`（当前标签）会把 A 的页面内容画到 B 的画布上。
+        """
+        tab = tab or self._active
+        if tab is None or tab.canvas is None or tab.note_doc is None:
             return
+        doc = tab.note_doc
         index = max(0, min(index, doc.page_count() - 1))
-        self.current_page = index
+        tab.page = index
         page = doc.pages[index]
-        self.canvas.set_note_content(doc.page_w, doc.page_h, doc.background,
-                                     page.strokes, page.undo, doc.background_color)
-        self._update_undo_buttons()
+        canvas = tab.canvas
+        # 先同步页码：`set_note_content()` 会发 page_info，画布里的 current_index
+        # 如果还是旧的 0，状态栏 / 页码框 / 缩略图高亮就会被写回第 1 页。
+        canvas.set_page_info(index, doc.page_count())
+        canvas.set_note_content(doc.page_w, doc.page_h, doc.background,
+                                page.strokes, page.undo, doc.background_color)
+        if tab is self._active:
+            self.thumbnails.set_current(index)
+            self._touch_view(tab)
+            self._update_undo_buttons()
     def _show_page_pdf(self, index: int, scroll: bool = True,
                        tab: Optional[DocumentTab] = None) -> None:
         tab = tab or self._active
@@ -150,22 +164,35 @@ class ReadingOpsMixin:
     def _save_current_read_state(self) -> None:
         self._save_read_state(self._active)
     def _save_read_state(self, tab: Optional[DocumentTab]) -> None:
-        """记下这篇 PDF 的阅读进度（页码 / 模式 / 滚动比例）。
+        """记下这份文档的阅读进度（PDF：页码 / 模式 / 滚动比例；笔记：页码）。
 
-        两条口径（都是踩过的坑）：
+        三条口径（都是踩过的坑）：
         - 带上 `tab.view_ts`（这个位置是什么时候看到的）：多窗口 / 多实例开同一本书时，
           手里拿着旧页码的窗口在退出时不会把别人刚读到的位置覆盖掉——所以写入用的
           时间戳必须是「视图被看到的时刻」，不是「写盘的时刻」；
+        - 笔记也要记（多页 .note 以前一关就从第 1 页重来，用户看到的是「没有记忆」）；
         - 失败不再静默吞掉，写进日志（`HN_LOG=debug`）便于现场排查。
         """
-        if tab is None or not tab.is_pdf or tab.pdf_engine is None:
+        if tab is None:
+            return
+        if tab.is_note:
+            if not tab.path:
+                return                     # 还没落盘的笔记没有稳定标识
+            try:
+                self.settings.set_note_read_state(tab.path, tab.page)
+            except Exception as e:         # pragma: no cover - 防御性
+                log_warning(_log, "note_read_state_save_failed", path=tab.path,
+                            error=repr(e))
+            return
+        if tab.pdf_engine is None or tab.canvas is None:
             return
         stamp = float(getattr(tab, "view_ts", 0.0)) or time.time()
         try:
             written = self.settings.set_pdf_read_state(
                 tab.pdf_engine.path, tab.page, tab.canvas.read_mode,
                 tab.canvas.scroll_offset_frac(), tab.pdf_engine.file_size,
-                tab.pdf_engine.mtime, ts=stamp)
+                tab.pdf_engine.mtime, ts=stamp,
+                pages=tab.pdf_engine.page_count())
         except Exception as e:                      # pragma: no cover - 防御性
             log_warning(_log, "read_state_save_failed", path=tab.pdf_engine.path,
                         error=repr(e))
@@ -184,7 +211,7 @@ class ReadingOpsMixin:
         self.outline_panel.set_current_page(tab.page)
         if tab.is_pdf:
             self._apply_search_highlight()
-            self._schedule_read_state_save()
+        self._schedule_read_state_save()      # 笔记也要记住翻到第几页
     def next_page(self) -> None:
         self.goto_page(self.current_page + 1)
     def prev_page(self) -> None:
@@ -366,10 +393,10 @@ class ReadingOpsMixin:
         self.page_spin.blockSignals(False)
         self.page_total_label.setText(f"/ {total}")
         self._refresh_page_nav()
-        if tab.is_pdf:
-            # 滚动在同一页内也会走到这里：阅读进度（含滚动比例）要跟着刷新，
-            # 否则一旦异常退出/断电，进度就停在「上一次跨页」的位置
-            self._schedule_read_state_save()
+        # 滚动在同一页内也会走到这里：阅读进度（含滚动比例）要跟着刷新，
+        # 否则一旦异常退出/断电，进度就停在「上一次跨页」的位置。
+        # 笔记同样要记（多页笔记以前完全没有位置记忆）。
+        self._schedule_read_state_save()
     def _on_canvas_cursor(self, canvas: PageCanvas, x, y) -> None:
         if canvas is not self.canvas:
             return
@@ -406,5 +433,10 @@ class ReadingOpsMixin:
     def _refresh_page_nav(self) -> None:
         tab = self._active
         total = tab.page_count() if tab is not None else 1
+        # 必须屏蔽信号：从 600 页的书切到 20 页的书时，setMaximum() 会把
+        # 当前值 401 夹到 20 并**发出 valueChanged**，于是刚切过去的标签
+        # 被 `goto_page(19)` 硬拽到最后一页（用户看到的就是「切个标签就跳页」）。
+        self.page_spin.blockSignals(True)
         self.page_spin.setMaximum(max(1, total))
+        self.page_spin.blockSignals(False)
         self.page_total_label.setText(f"/ {total}")

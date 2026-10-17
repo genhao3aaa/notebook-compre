@@ -154,6 +154,10 @@ class PageCanvas(CanvasRenderMixin, CanvasLayoutMixin, CanvasInputMixin, QWidget
         self._layout_scale: float = -1.0
         self._layout_rot: int = -1
         self._layout_total: int = -1
+        #: 「还要按这个比例恢复一次滚动位置」。装载文档时画布往往还没有真实尺寸，
+        #: 那时算出来的 offset 是不可靠的；等第一次真正排版（显示 / resize）后再补一次，
+        #: 用户重新打开书才会落在原来那一段文字上，而不是页首。
+        self._restore_frac: Optional[float] = None
 
         # 右侧 / 下侧的网页式滑动条（自绘）。它们只是「显示 + 输入」的末端：
         # 位置、显隐、比例全部由 `canvas_layout` 里的 _sync_scrollbars 推过来，
@@ -220,6 +224,9 @@ class PageCanvas(CanvasRenderMixin, CanvasLayoutMixin, CanvasInputMixin, QWidget
     def _fit_to(self, mode: str = "page") -> None:
         if self.width() <= 0 or self.height() <= 0:
             return
+        # 重新排版前先记下「现在看到哪儿」：缩放/fit 之后内容总高会变，
+        # 只按比例还原会把画面挪到别的页；按「页 + 页首在屏幕上的位置」摆回去才对得上。
+        anchor = self.view_anchor()
         margin = 24.0
         dw, dh = self.display_size_pt()
         vw = max(1.0, self.width() - margin * 2)
@@ -243,6 +250,8 @@ class PageCanvas(CanvasRenderMixin, CanvasLayoutMixin, CanvasInputMixin, QWidget
                                   12.0 if mode == "width" and css_h > vh
                                   else (self.height() - css_h) / 2.0)
             self._clamp_offset()
+        self.apply_view_anchor(anchor)
+        self._apply_restore_frac()      # 装载时的「上次读到哪个比例」现在才真正可用
         self.zoom_changed.emit(self.scale)
     def _scroll_to_page(self, index: int, align: str = "top") -> None:
         """把某页滚到视口顶部/居中（仅连续模式生效）。"""
@@ -315,6 +324,7 @@ class PageCanvas(CanvasRenderMixin, CanvasLayoutMixin, CanvasInputMixin, QWidget
         self._fit_to(mode="width")
     def focus_page_rect(self, rect: Tuple[float, float, float, float]) -> None:
         """把页面坐标矩形滚动到视口中央。"""
+        self._restore_frac = None      # 跳到搜索命中/书签：以这次跳转为准
         x0, y0, x1, y1 = rect
         cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
         css = self.page_to_css(cx, cy)
@@ -326,6 +336,7 @@ class PageCanvas(CanvasRenderMixin, CanvasLayoutMixin, CanvasInputMixin, QWidget
         self._clamp_offset()
         self.update()
     def pan_by(self, dx: float, dy: float) -> None:
+        self._restore_frac = None      # 用户自己滚过了：不要再被「恢复位置」拽回去
         self.offset.setX(self.offset.x() + dx)
         self.offset.setY(self.offset.y() + dy)
         self._clamp_offset()
@@ -360,15 +371,36 @@ class PageCanvas(CanvasRenderMixin, CanvasLayoutMixin, CanvasInputMixin, QWidget
         """恢复「自适应缩放」策略（供菜单「适应页面」调用）。"""
         self._user_zoomed = False
     def restore_scroll_frac(self, frac: float) -> None:
-        """按比例恢复滚动位置（连续模式）。"""
+        """按比例恢复滚动位置（连续模式）。
+
+        同时把比例留在 `_restore_frac` 里：装载文档时画布可能还没有真实尺寸
+        （标签还没显示，尺寸是默认值），算出来的 offset 不可靠 —— 等第一次真正
+        排版完成后再按同一比例补一次，恢复出来的位置才对得上。
+        """
         if self.read_mode != "continuous" or self.mode != "pdf":
+            return
+        self._restore_frac = max(0.0, min(1.0, float(frac)))
+        self._apply_restore_frac()
+    def _apply_restore_frac(self) -> None:
+        """把待恢复的滚动比例真正落到 offset 上（排版完成 / 显示后调用）。"""
+        frac = self._restore_frac
+        if frac is None:
+            return
+        if self.read_mode != "continuous" or self.mode != "pdf":
+            self._restore_frac = None
             return
         self._ensure_layout()
         if not self._layout_tops:
-            return
+            return                    # 布局还没建好：留着下次再补
+        self._restore_frac = None
         content_h = self._layout_tops[-1] + self._layout_heights[-1]
+        if content_h <= 0:
+            return
         self.offset.setY(-float(frac) * content_h)
         self._clamp_offset()
+        # 这里**不**重算“视口中线所在页”：恢复的页号是用户关掉时看到的那个，
+        # 视口高度略有不同就会差一页；重新打开时页码应当还是原来那个数字，
+        # 之后用户自己滚动时再由 `_sync_current_page_from_view()` 接管。
         self.update()
     def rotate_by(self, delta: int) -> None:
         """delta 为 ±90，顺时针为正。"""

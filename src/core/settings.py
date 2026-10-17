@@ -448,21 +448,33 @@ class AppSettings:
         return state if isinstance(state, dict) else {}
 
     def set_pdf_read_state(self, path: str, page: int, mode: str, scroll: float,
-                           size: int, mtime: float, ts: Optional[float] = None) -> bool:
+                           size: int, mtime: float, ts: Optional[float] = None,
+                           pages: int = 0) -> bool:
         """写入阅读进度；返回是否真的写进去了。
 
         `ts` 是「这个位置是什么时候看到的」（wall clock）。已存的进度如果**更新**
         就不覆盖——多窗口 / 多实例开同一本书时，手里拿着旧页码的那个窗口在退出时
         会把别人刚读到的位置盖掉，用户看到的现象就是「每次打开都回到那一页」。
+
+        `pages` 是文件的总页数：下次打开时用它判断「文档有没有被换掉」。
+        只比文件大小会把「同步盘改了元数据 / 别的软件重写过一遍」误判成换了文档，
+        于是每次都从第 1 页开始（用户看到的就是「记不住读到哪」）。
         """
         stamp = time.time() if ts is None else float(ts)
         data = self._json_map("pdf_read_state")
         key = _doc_key(path)
         old = data.get(key)
-        if isinstance(old, dict) and float(old.get("ts", 0.0)) > stamp:
-            return False
+        if isinstance(old, dict):
+            old_ts = float(old.get("ts", 0.0))
+            # 系统时钟回拨 / 历史脏数据会让旧时间戳永远「更新」，
+            # 结果是这份文档的进度再也写不进去 —— 这里把明显来自未来的时间戳作废。
+            if old_ts > max(stamp, time.time()) + 5.0:
+                log_warning(_log, "read_state_future_ts", path=path, ts=old_ts)
+                old_ts = 0.0
+            if old_ts > stamp:
+                return False
         data.pop(key, None)          # 先删再插，保证 LRU 顺序
-        data[key] = {
+        entry = {
             "page": int(page),
             "mode": "continuous" if mode == "continuous" else "single",
             "scroll": round(float(scroll), 4),
@@ -470,8 +482,30 @@ class AppSettings:
             "mtime": float(mtime),
             "ts": stamp,
         }
+        if int(pages or 0) > 0:
+            entry["pages"] = int(pages)
+        data[key] = entry
         self._set_json_map("pdf_read_state", data, MAX_PDF_STATE)
         return True
+
+    # ------------------------------------------------------------------ #
+    # 笔记阅读位置（多页 .note 也要记得「上次翻到第几页」）
+    # ------------------------------------------------------------------ #
+    def note_read_state(self, path: str) -> int:
+        """某个笔记文件上次看到的页序号（0 起）；没有记录则返回 0。"""
+        data = self._json_map("note_read_state")
+        try:
+            return max(0, int(data.get(_doc_key(path), 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    def set_note_read_state(self, path: str, page: int) -> None:
+        """记住某个笔记文件翻到了第几页（和 PDF 进度分开存，互不影响）。"""
+        key = _doc_key(path)
+        data = self._json_map("note_read_state")
+        data.pop(key, None)          # 先删再插，保证 LRU 顺序
+        data[key] = max(0, int(page))
+        self._set_json_map("note_read_state", data, MAX_PDF_STATE)
 
     # ------------------------------------------------------------------ #
     # 会话：上次退出时打开的标签（[{kind, path}, ...]）

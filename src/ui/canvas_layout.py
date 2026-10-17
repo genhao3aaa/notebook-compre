@@ -152,6 +152,35 @@ class CanvasLayoutMixin:
         y0 = -self.offset.y()
         y1 = y0 + self.height()
         return (self._page_at_doc_y(y0), self._page_at_doc_y(y1))
+    def view_anchor(self) -> Optional[Tuple[int, float]]:
+        """连续阅读的「画面锚点」：(视口中线所在页, 该页页首相对视口的 y)。
+
+        为什么不用滚动比例：缩放 / 换窗口尺寸之后内容总高会变，同一个比例对应
+        的位置也变了，用户会觉得「明明只是切了个标签 / 拉了下窗口，怎么跳页了」。
+        按「页 + 页首在屏幕上的位置」还原，看到的才是同一段文字。
+        """
+        if self.mode != "pdf" or self.read_mode != "continuous":
+            return None
+        self._ensure_layout()
+        if not self._layout_tops or not self._layout_heights:
+            return None
+        center_doc = -self.offset.y() + self.height() / 2.0
+        idx = self._page_at_doc_y(center_doc)
+        if not (0 <= idx < len(self._layout_tops)):
+            return None
+        return idx, self.offset.y() + self._layout_tops[idx]
+    def apply_view_anchor(self, anchor: Optional[Tuple[int, float]]) -> None:
+        """把 `view_anchor()` 记下的画面摆回去（重新排版 / 重新显示之后调用）。"""
+        if not anchor or self.mode != "pdf" or self.read_mode != "continuous":
+            return
+        idx, page_top_y = anchor
+        self._ensure_layout()
+        if not (0 <= int(idx) < len(self._layout_tops)):
+            return
+        self.offset.setY(float(page_top_y) - self._layout_tops[int(idx)])
+        self._clamp_offset()
+        self._sync_current_page_from_view()      # 视口变了，当前页 / 页码要跟着变
+        self.update()
     def _page_xform(self, include_offset: bool = True,
                     index: Optional[int] = None) -> QTransform:
         """页面坐标 → 显示坐标 的变换（旋转 → 缩放 → 归位 → 平移）。
@@ -312,6 +341,7 @@ class CanvasLayoutMixin:
         """
         min_x, max_x, min_y, max_y = self._clamp_bounds()
         frac = _clamp(float(frac), 0.0, 1.0)
+        self._restore_frac = None      # 用户拖了滑块：以这次拖动为准
         moved = False
         if vertical and max_y > min_y:
             self.offset.setY(max_y - frac * (max_y - min_y))

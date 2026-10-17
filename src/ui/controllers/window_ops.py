@@ -93,6 +93,9 @@ class WindowOpsMixin:
 
         # 画布信号与回调原来挂在源窗口上：先摘掉，交给目标窗口重接
         self.unbind_canvas_from_window(tab.canvas)
+        # 搬走前先把「看到哪儿」记到标签上：新窗口的画布尺寸不同会重排，
+        # 目标窗口接管时要靠这份记忆把位置摆回去
+        self._remember_view(tab)
         target.adopt_tab(tab)
     def adopt_tab(self, tab: DocumentTab, activate: bool = True) -> None:
         """接管一个标签：丢掉本窗口开局的空白占位标签，挂上去并重新接线。"""
@@ -272,6 +275,7 @@ class WindowOpsMixin:
         super().changeEvent(event)
         if event.type() == QEvent.Type.ActivationChange and not self.isActiveWindow():
             for tab in list(getattr(self, "_tabs", [])):
+                self._remember_view(tab)
                 self._save_read_state(tab)
     def closeEvent(self, event) -> None:
         # A4：先把后台保存写完，再问「是否保存」（否则可能丢掉最后一次保存）
@@ -288,6 +292,7 @@ class WindowOpsMixin:
         for tab in list(self._tabs):
             # 写盘时按「这个位置是什么时候看到的」比较新旧：拿着旧页码的后台窗口
             # 不会把别人刚读到的位置盖掉（见 _save_read_state / set_pdf_read_state）
+            self._remember_view(tab)
             self._save_read_state(tab)
         is_primary = _OPEN_WINDOWS.primary() is self
         if is_last:

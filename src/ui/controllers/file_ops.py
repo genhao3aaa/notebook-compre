@@ -49,9 +49,10 @@ class FileOpsMixin:
             QMessageBox.critical(self, "打开失败", f"无法打开笔记文件：\n{e}")
             return None
         tab = DocumentTab(NOTE, self._make_canvas(), os.path.basename(path))
+        # 先挂路径再装载：装载时要按路径读出「上次翻到第几页」
+        tab.path = path
         self._add_tab(tab, activate=activate)
         self._load_note_into_tab(tab, doc)
-        tab.path = path
         self._refresh_tab_title(tab)
         self._add_recent(path)
         self.settings.set_last_dir(os.path.dirname(path))
@@ -120,17 +121,31 @@ class FileOpsMixin:
         QApplication.clipboard().setText(tab.path)
         self._status(f"已复制路径：{tab.path}", 3000)
     def _load_note_into_tab(self, tab: DocumentTab, doc: NoteDocument) -> None:
-        """把一份笔记文档塞进标签的画布，并同步该标签相关的界面。"""
+        """把一份笔记文档塞进标签的画布，并同步该标签相关的界面。
+
+        会恢复「上次翻到第几页」：多页笔记以前每次打开都停在第 1 页，
+        用户看到的就是「没有记忆」。
+        """
         canvas = tab.canvas
         canvas.read_mode = "single"        # 笔记始终单页
         canvas.stroke_provider = None
         canvas.on_page_request = None
         tab.note_doc = doc
-        tab.page = 0
         tab.dirty = False
         tab.kind = NOTE
+        page = 0
+        if tab.path:
+            try:
+                page = self.settings.note_read_state(tab.path)
+            except Exception:
+                page = 0
+        page = max(0, min(int(page), max(0, doc.page_count() - 1)))
+        tab.page = page
+        tab.view_page = page            # 视图记忆的起点：装载完就停在这一页
+        tab.view_frac = 0.0
+        canvas.set_page_info(page, doc.page_count())
         canvas.set_note_content(doc.page_w, doc.page_h, doc.background,
-                                doc.pages[0].strokes, doc.pages[0].undo,
+                                doc.pages[page].strokes, doc.pages[page].undo,
                                 doc.background_color)
         if tab is self._active:
             self._sync_ui_from_tab(tab)
@@ -183,16 +198,24 @@ class FileOpsMixin:
         read_mode: Optional[str] = None
         scroll_frac = 0.0
         state = self.settings.pdf_read_state(path)
-        # 判据：**文件大小一致**就认（内容没被换成别的文档）；
-        # 修改时间只用来提示，不再当作否决条件——同步盘/备份工具只动 mtime 不动内容，
-        # 旧口径下这会让人「每次打开都被丢回第 1 页」。
-        if state and int(state.get("size", -1)) == engine.file_size:
-            if abs(float(state.get("mtime", -1.0)) - engine.mtime) >= 1e-6:
-                log_debug(_log, "read_state_mtime_changed",
-                          path=path, saved=str(state.get("mtime")))
-            page = max(0, min(int(state.get("page", 0)), engine.page_count() - 1))
-            read_mode = state.get("mode")
-            scroll_frac = float(state.get("scroll", 0.0) or 0.0)
+        # 判据：**文件大小或总页数对得上**就认（内容没被换成别的文档）。
+        # 只看大小太脆：同步盘 / 别的软件重写一遍都会改大小，而页数没变——
+        # 旧口径下这类文件「每次打开都回到第 1 页」，看起来就是进度没记住。
+        # 修改时间只用来提示，不当作否决条件。
+        if state:
+            saved_pages = int(state.get("pages", 0) or 0)
+            same_doc = (int(state.get("size", -1)) == engine.file_size
+                        or (saved_pages > 0 and saved_pages == engine.page_count()))
+            if not same_doc:
+                log_debug(_log, "read_state_file_changed", path=path,
+                          size=str(state.get("size")), pages=str(saved_pages))
+            else:
+                if abs(float(state.get("mtime", -1.0)) - engine.mtime) >= 1e-6:
+                    log_debug(_log, "read_state_mtime_changed",
+                              path=path, saved=str(state.get("mtime")))
+                page = max(0, min(int(state.get("page", 0)), engine.page_count() - 1))
+                read_mode = state.get("mode")
+                scroll_frac = float(state.get("scroll", 0.0) or 0.0)
 
         # 阅读模式：文档自带的阅读状态优先，否则用全局默认
         mode = read_mode if read_mode in ("single", "continuous") else self.settings.pdf_read_mode()
@@ -202,6 +225,9 @@ class FileOpsMixin:
         self._show_page_pdf(page, scroll=True, tab=tab)
         if mode == "continuous" and scroll_frac > 0.0:
             canvas.restore_scroll_frac(scroll_frac)
+        # 视图记忆的起点：装载完停在哪，之后切走再切回来就校对回这里
+        tab.view_page = int(page)
+        tab.view_frac = float(scroll_frac) if mode == "continuous" else 0.0
 
         try:
             tab.outline = list(engine.outline() or [])

@@ -76,6 +76,13 @@ class DocumentTab:
         #: 阅读进度写盘时用它做**跨窗口**的新旧比较：多窗口/多实例开同一本书时，
         #: 手里拿着旧页码的那个窗口不会把别人刚读到的位置覆盖掉。
         self.view_ts: float = 0.0
+        #: 视图记忆：切走时记下「看到哪一页、连续阅读滚到全文的百分之几」，
+        #: 切回来时用它校对画布（见 `tab_ops._remember_view / _restore_view`）。
+        #: 不能只依赖 canvas 自己的 offset —— 隐藏期间 Qt 会发 resize，
+        #: `fit_to_view()` 一重排就把滚动位置算回页首，于是「切回来还是开头那一屏」。
+        #: None 表示这个标签还没被真正看过（刚从磁盘装载），此时不要校对。
+        self.view_page: Optional[int] = None
+        self.view_frac: float = 0.0
 
         # ---- 搜索状态（每个标签独立：切回来时结果列表还在） ----
         self.search_hits: List = []

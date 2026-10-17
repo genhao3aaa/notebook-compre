@@ -380,6 +380,7 @@ class CanvasRenderMixin:
         self._layout_heights = []
         self._layout_scale = -1.0
         self._layout_total = -1
+        self._restore_frac = None
         self.stroke_provider = None
         self._sync_scrollbars()      # 文档断开后没有内容可滚，两条都该收起来
     def paintEvent(self, e) -> None:
