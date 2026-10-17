@@ -11,7 +11,7 @@ __pycache__/
 venv/
 env/
 
-# ---- PyInstaller 打包产物 / 中间目录 ----
+# ---- PyInstaller 打包产物 / 中间目录（用 build.spec 可重新生成）----
 build/
 build_*/
 dist/
@@ -27,7 +27,7 @@ target/
 *.pdb
 *.d
 
-# ---- 缓存与日志 ----
+# ---- 测试 / 工具缓存与日志 ----
 *.log
 
 # ---- 运行时生成的数据文件 ----

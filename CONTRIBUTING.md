@@ -7,6 +7,7 @@
 - 依赖：`pip install -r requirements.txt pytest ruff pyright`
 
 ## 构建 Rust 核心（可选）
+
 未编译时程序会自动回退到纯 Python 实现，功能可用但性能较低。
 
 ```bash
