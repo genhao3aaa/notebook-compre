@@ -122,6 +122,17 @@ def test_outline_matches_legacy_geometry(qapp):
     assert inked > 500, f"样本太小（墨迹像素 {inked}），比较没有意义"
 
 
+def test_self_intersecting_pressure_stroke_keeps_crossing_inked(qapp):
+    """压感笔画自交时，交叉区域必须正常着墨，不能因奇偶填充而留白。"""
+    stroke = Stroke(tool="pen", color="#000000", width=20.0,
+                    points=[(40, 40, 0.4), (200, 200, 0.8),
+                            (40, 200, 0.5), (200, 40, 0.9)])
+    img = _render([stroke])
+
+    for x, y in ((120, 120), (118, 120), (122, 120), (120, 118), (120, 122)):
+        assert img.pixelColor(x, y).alpha() > 200, f"交叉点 ({x}, {y}) 出现空白"
+
+
 def test_curved_stroke_keeps_both_edges(qapp):
     """弯曲笔画的上下沿都要跟随折线：不能把一侧拉成直弦。
 

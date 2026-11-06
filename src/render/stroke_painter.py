@@ -119,6 +119,8 @@ def build_pressure_outline(points: Sequence[Point], width: float,
     差别只在圆头/接缝的抗锯齿表现。
     """
     path = QPainterPath()
+    # 非零环绕规则可避免自交轮廓的重叠区域被奇偶规则误判为空白。
+    path.setFillRule(Qt.WindingFill)
     n = len(points)
     if n < 2:
         return path
