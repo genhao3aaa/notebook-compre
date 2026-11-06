@@ -69,15 +69,22 @@ class OutlinePanel(QWidget):
         self.tip.setVisible(True)
         self.tip.setText(reason)
 
-    def set_outline(self, entries: List[OutlineEntry]) -> None:
-        """按 level 重建目录树；扁平列表 + level 表示层级。"""
+    def set_outline(self, entries: List[OutlineEntry], noun: str = "书签",
+                    show_page: bool = True) -> None:
+        """按 level 重建目录树；扁平列表 + level 表示层级。
+
+        PDF 用默认参数（行为与旧版逐字一致）；Markdown 标题大纲传
+        `noun="标题", show_page=False`，把「第 N 页」的措辞换成纯标题。
+        """
         self._entries = list(entries or [])
         self.tree.clear()
         if not self._entries:
             self.tree.setVisible(False)
             self.count_label.setText("")
             self.tip.setVisible(True)
-            self.tip.setText("该 PDF 没有书签目录\n（可用左侧「页面」标签浏览）")
+            self.tip.setText(
+                "该 PDF 没有书签目录\n（可用左侧「页面」标签浏览）" if show_page
+                else f"该文档没有{noun}\n（可用「搜索」查找内容）")
             return
 
         self.tip.setVisible(False)
@@ -89,11 +96,11 @@ class OutlinePanel(QWidget):
             parent = stack[level - 2] if (level >= 2 and len(stack) >= level - 1) else None
             item = QTreeWidgetItem(parent if parent is not None else self.tree, [e.display])
             item.setData(0, Qt.UserRole, (e.page, e.top))
-            item.setToolTip(0, f"{e.display}  →  第 {e.page + 1} 页")
+            item.setToolTip(0, f"{e.display}  →  第 {e.page + 1} 页" if show_page else e.display)
             item.setExpanded(level == 1)
             del stack[level - 1:]
             stack.append(item)
-        self.count_label.setText(f"共 {len(self._entries)} 个书签")
+        self.count_label.setText(f"共 {len(self._entries)} 个{noun}")
 
     # ------------------------------------------------------------------ #
     def set_current_page(self, index: int) -> None:

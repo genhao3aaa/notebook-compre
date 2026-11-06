@@ -165,8 +165,8 @@ class WindowOpsMixin:
         而新窗口的撤销按钮 / 状态栏也收不到画布事件。
         """
         canvas = tab.canvas
-        if canvas is None:
-            return
+        if canvas is None or not isinstance(canvas, PageCanvas):
+            return          # Markdown 视图没有连续阅读回调
         canvas.stroke_provider = lambda idx, t=tab: self._pdf_strokes_for(t, idx)
         canvas.on_page_request = lambda idx, t=tab: self._on_canvas_page_request(t, idx)
     def unbind_canvas_from_window(self, canvas: PageCanvas) -> None:
@@ -213,10 +213,7 @@ class WindowOpsMixin:
             if not path or not os.path.exists(path):
                 continue
             try:
-                if path.lower().endswith(".pdf"):
-                    tab = self.open_pdf(path, activate=False)
-                else:
-                    tab = self.open_note(path, activate=False)
+                tab = self.open_path(path, activate=False)
             except Exception:
                 tab = None
             if tab is not None:

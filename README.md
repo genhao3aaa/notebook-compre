@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Rust](https://img.shields.io/badge/rust-optional-orange.svg)](#rust-加速核心可选)
 
-一款运行在 **Windows 10 / 11** 上的桌面手写程序：新建手写笔记、打开 PDF 并直接在页面上批注。
+一款运行在 **Windows 10 / 11** 上的桌面手写与阅读程序：新建手写笔记、打开 PDF 批注、阅读 Markdown 文档。
 外壳使用 **PySide6**，PDF 引擎使用 **PyMuPDF**，可选接入 **Rust 渲染核心** 提升压感笔迹与命中测试性能。
 
 > A Windows desktop app for handwriting notes and PDF annotation, built with PySide6 + PyMuPDF,
@@ -50,7 +50,10 @@
 - 画布操作：`Ctrl + 滚轮` 缩放；`空格` 或 `中键` 拖拽平移。
 - 保存：自定义 `.note` 格式（**v2 二进制容器**：magic + 元数据 + 列式点数据 + CRC32 + 原子写）。
 
-### B. PDF 批注与阅读
+### B. 阅读器（PDF 批注 / Markdown 阅读）
+
+阅读器支持手写笔记（`.note`）、PDF（`.pdf`）与 Markdown（`.md` 等）三类文件，
+统一从「文件 → 打开文件…」打开，也可以把文件拖到程序图标上；命令行 `main.py <文件>` 同样会按后缀分发。
 
 - 打开 PDF：按页渲染为高清图像显示。
 - **书签 / 目录**：侧边栏「目录」标签展示多级书签树，点击跳转；自动高亮当前页所在书签。
@@ -69,6 +72,15 @@
 - 性能：PDF 页面 **异步渲染** + **渲染缓存**，避免 UI 卡顿。
 - 坐标系统：批注坐标基于 **PDF points**，显示按缩放因子映射，导出无需换算。
 
+**Markdown 阅读（只读，`.md` / `.markdown` / `.mdown` / `.mkd` / `.mdtxt`）**
+
+- 打开后渲染为富文本：标题、列表、表格、引用、代码块、链接、图片、粗斜体，跟随浅 / 深色主题。
+- **标题目录**：`#` / `##` 等标题自动生成侧边栏「目录」，点击跳到对应位置。
+- **全文搜索**：侧边栏「搜索」直接检索渲染内容，命中高亮，可逐个跳转。
+- **视图切换**：「视图 → 查看 Markdown 源码」在渲染阅读与原始文本之间切换。
+- **阅读进度**：记住整篇滚动位置；缩放、主题切换都不丢内容。
+- **只读**：不参与保存 / 另存为 / 导出；文档里的本地 `.md` 链接会在新标签打开。
+
 ### C. 浏览器式多标签
 
 - **任意混开**：多个笔记、多个 PDF、笔记与 PDF 混合，全部可同时打开。
@@ -82,6 +94,9 @@
 ### D. 界面
 
 - **左侧可折叠侧边栏**（默认 248px，可拖拽 180~460px）：新建笔记、最近文件、页面缩略图。
+- **最近文件管理**：按「置顶 / 最近打开」分组，笔记 / PDF / Markdown 各有类型图标；
+  悬停显示完整路径与打开时间，失效文件标灰。可按文件名 / 路径筛选，右键支持打开、
+  置顶、复制路径、在资源管理器中显示、移除；另提供「清理失效」「清空全部」。
 - **响应式顶部工具栏**（约 46px）：窗口变窄时优先级最低的按钮自动收进最右端的「»」溢出菜单。
 - **工具栏下方的标签栏**：每个标签有类型图标、标题、未保存星号 `*` 与常显的 × 关闭按钮。
 - **浅色 / 深色主题**：一键切换，样式由 `src/ui/theme.py` 的 QSS 统一管理。
@@ -170,8 +185,12 @@ python main.py "D:\书\book.pdf" "D:\笔记\笔记.note"   # 多个文件开成�
 | 平移 | 按住 `空格` 拖拽，或 `中键` 拖拽 |
 | 连续 / 单页阅读 | 工具栏的阅读模式按钮，或 `Ctrl+Shift+L` |
 | 新建笔记 | `Ctrl+N`，可先选背景 |
-| 打开笔记 / PDF | `Ctrl+O` 或菜单「打开笔记… / 打开 PDF…」 |
-| 保存 | `Ctrl+S`（笔记存为 `.note`，PDF 批注存为同名 `.annot`） |
+| 打开文件（笔记 / PDF / Markdown） | `Ctrl+Shift+O` 或菜单「文件 → 打开文件…」 |
+| 打开笔记 | `Ctrl+O` 或菜单「打开笔记…」 |
+| 打开 PDF / Markdown | 菜单「打开 PDF… / 打开 Markdown…」 |
+| Markdown 源码 / 渲染切换 | 菜单「视图 → 查看 Markdown 源码」 |
+| 整理最近文件 | 侧栏筛选框、右键菜单，或「清理失效 / 清空全部」按钮 |
+| 保存 | `Ctrl+S`（笔记存为 `.note`，PDF 批注存为同名 `.annot`；Markdown 只读，无需保存） |
 | 导出 | `Ctrl+E`（笔记 / PDF 均导出为带内容的 PDF） |
 | 撤销 / 重做 | `Ctrl+Z` / `Ctrl+Y` |
 | 清空当前页 | `Ctrl+K` |
@@ -344,7 +363,7 @@ notebook-compre/
 │       ├── pyproject.toml     # maturin 配置（abi3-py310）
 │       └── src/lib.rs         # simplify / hit_test / rasterize
 ├── tests/
-│   ├── test_*.py              # 单元与回归测试
+│   ├── test_*.py              # 单元与回归测试（含 test_markdown / test_recent_files）
 │   └── benchmarks/            # 基准脚本（渲染 / 增量 / 存储 / 简化 / 冷启动 / 后端对拍）
 └── src/
     ├── core/                  # 核心数据层（与 UI 完全解耦）
@@ -354,10 +373,11 @@ notebook-compre/
     │   ├── note_document.py   # 笔记文档（.note，多页，背景样式+背景色）
     │   ├── annot_document.py  # 批注文档（.annot，含 PDF MD5）
     │   ├── annot_store.py     # 批注保存位置的兜底链
-    │   ├── document_tab.py    # 标签级文档状态
+    │   ├── document_tab.py    # 标签级文档状态（note / pdf / md）
+    │   ├── markdown_document.py # Markdown 文档模型（读取 / 标题大纲 / 全文检索）
     │   ├── colors.py          # 颜色工具（明暗判定 / RGBA 解析 / 半透明叠加）
     │   ├── hn_log.py          # 结构化日志
-    │   └── settings.py        # 偏好持久化（主题/工具/笔色笔宽/最近文件/窗口几何）
+    │   └── settings.py        # 偏好持久化（主题/工具/最近文件(置顶)/阅读进度/窗口几何）
     ├── tools/                 # 工具系统（可扩展）
     │   ├── base.py            # Tool 抽象基类 + ToolContext
     │   ├── pen.py             # 钢笔（压感）
@@ -370,6 +390,7 @@ notebook-compre/
     │   ├── stroke_painter.py  # 笔迹绘制唯一真源（平滑 + 压感）
     │   └── thumbnail_pool.py  # 有界线程池的 PDF 缩略图加载器
     └── ui/                    # 界面层
+        ├── markdown_view.py   # Markdown 只读渲染视图（目录/搜索/主题/缩放）
         ├── canvas.py          # 手写画布：视图状态 + 工具 + 缩放/旋转 + 编辑
         ├── canvas_render.py   # 整页重建 / 脏矩形增量重绘 / PDF 异步渲染
         ├── canvas_input.py    # 鼠标 / 触控笔 / 滚轮 / 键盘（双通道互斥）

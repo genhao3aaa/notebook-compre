@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (QApplication, QColorDialog, QComboBox, QFileDialo
                                QTabBar, QTabWidget, QToolButton, QVBoxLayout,
                                QWidget)
 from src.core.annot_document import AnnotDocument
-from src.core.document_tab import DocumentTab, NOTE, PDF, same_path
+from src.core.document_tab import DocumentTab, NOTE, PDF, MD, same_path
 from src.core.note_document import (BACKGROUND_TYPES, BG_BLANK, BG_COLOR_PRESETS,
                                     BG_LABELS, NoteDocument)
 from src.core.settings import AppSettings
@@ -134,7 +134,7 @@ class MainWindow(UiBuildMixin, UiThemeMixin, TabOpsMixin, WindowOpsMixin, FileOp
     @mode.setter
     def mode(self, value: str) -> None:
         t = self._active
-        if t is not None and value in (NOTE, PDF):
+        if t is not None and value in (NOTE, PDF, MD):
             t.kind = value
     @property
     def note_doc(self) -> Optional[NoteDocument]:
@@ -260,6 +260,8 @@ class MainWindow(UiBuildMixin, UiThemeMixin, TabOpsMixin, WindowOpsMixin, FileOp
         发来的」。只有来自当前标签的信号才允许刷新界面，否则只更新数据——
         避免后台标签的迟到回调把当前标签的状态栏/页码写乱。
         """
+        if not isinstance(canvas, PageCanvas):
+            return          # MarkdownView 不是画布，没有这些信号
         canvas.zoom_changed.connect(lambda v, c=canvas: self._on_canvas_zoom(c, v))
         canvas.page_info_changed.connect(
             lambda cur, tot, z, c=canvas: self._on_canvas_page_info(c, cur, tot, z))
@@ -278,8 +280,19 @@ class MainWindow(UiBuildMixin, UiThemeMixin, TabOpsMixin, WindowOpsMixin, FileOp
         self._apply_tool_settings_to(canvas)
         canvas.set_canvas_bg(self.theme.canvas_bg())
         return canvas
+    def _make_markdown_view(self):
+        """新建一个 Markdown 只读阅读视图，套用当前主题。"""
+        from src.ui.markdown_view import MarkdownView
+
+        view = MarkdownView()
+        view.apply_theme(self.theme.colors())
+        # 文档里的本地 .md 链接 → 在新标签打开，而不是丢给外部程序
+        view.open_markdown_requested.connect(self.open_markdown)
+        return view
     def _apply_tool_settings_to(self, canvas: PageCanvas) -> None:
         """工具与笔的样式是「跟人走」的全局设置，切标签时推给目标画布。"""
+        if not isinstance(canvas, PageCanvas):
+            return          # Markdown 视图不需要笔/工具样式
         canvas.set_pen_color(self.settings.pen_color())
         canvas.set_pen_width(self.settings.pen_width())
         canvas.set_eraser_width(self.settings.eraser_width())
@@ -298,6 +311,8 @@ class MainWindow(UiBuildMixin, UiThemeMixin, TabOpsMixin, WindowOpsMixin, FileOp
         c = self.canvas
         if c is not None:
             c.zoom_to(factor)
+            # MarkdownView 没有 zoom_changed 信号，缩放后主动同步状态栏/顶栏数字
+            self._on_zoom(c.scale)
     def _status(self, text: str, timeout: int = 4000) -> None:
         """状态栏临时提示（替代烦人的模态弹窗）。"""
         self.statusBar().showMessage(text, timeout)

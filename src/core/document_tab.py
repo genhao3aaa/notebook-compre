@@ -11,6 +11,9 @@
   缩放/滚动位置、撤销栈全部原样保留，切回来还是刚才那一页那一个缩放比例；
 * 代价是内存（每个 canvas 一份渲染缓存），由主窗口的缓存预算统一回收。
 
+Markdown 标签的视图是 `MarkdownView`（QTextBrowser），它不是 PageCanvas，
+但实现了同名的最小兼容接口，所以标签的挂/切/关/搬运行路径保持统一。
+
 异步任务的「串台」防护
 ----------------------
 搜索、缩略图、页面渲染都是后台线程。用户可能在任务飞行途中切走甚至关掉标签，
@@ -32,6 +35,7 @@ if TYPE_CHECKING:  # 仅用于类型提示，避免循环导入
 
 NOTE = "note"
 PDF = "pdf"
+MD = "md"
 
 
 def same_path(a: Optional[str], b: Optional[str]) -> bool:
@@ -56,19 +60,22 @@ class DocumentTab:
     def __init__(self, kind: str, canvas: "PageCanvas", title: str = "") -> None:
         DocumentTab._seq += 1
         self.tab_id: int = DocumentTab._seq
-        self.kind: str = kind if kind in (NOTE, PDF) else NOTE
+        self.kind: str = kind if kind in (NOTE, PDF, MD) else NOTE
         self.canvas: Optional["PageCanvas"] = canvas
         self.title: str = title or "未命名笔记"
 
-        #: 源文件路径（笔记 *.note 或 PDF）；未保存的笔记为 None
+        #: 源文件路径（笔记 *.note / PDF / Markdown）；未保存的笔记为 None
         self.path: Optional[str] = None
         self.dirty: bool = False
 
-        # ---- 文档对象（笔记 / PDF 二选一） ----
+        # ---- 文档对象（笔记 / PDF / Markdown 三选一） ----
         self.note_doc: Optional["NoteDocument"] = None
         self.pdf_engine: Optional["PdfEngine"] = None
         self.annot_doc: Optional["AnnotDocument"] = None
         self.annot_path: Optional[str] = None
+        #: Markdown 源文本与标题大纲（渲染视图本身就是 tab.canvas）
+        self.md_text: str = ""
+        self.md_headings: List = []
 
         # ---- 视图状态（缩放/偏移/旋转/阅读模式都由 canvas 持有，这里只存页码） ----
         self.page: int = 0
@@ -109,10 +116,16 @@ class DocumentTab:
     def is_note(self) -> bool:
         return self.kind == NOTE
 
+    @property
+    def is_md(self) -> bool:
+        return self.kind == MD
+
     def page_count(self) -> int:
         try:
             if self.is_pdf:
                 return int(self.pdf_engine.page_count()) if self.pdf_engine else 1
+            if self.is_md:
+                return 1
             return int(self.note_doc.page_count()) if self.note_doc else 1
         except Exception:
             return 1
@@ -130,7 +143,12 @@ class DocumentTab:
         return ("* " if self.dirty else "") + self.display_name()
 
     def tooltip(self) -> str:
-        kind = "PDF 批注" if self.is_pdf else "手写笔记"
+        if self.is_md:
+            kind = "Markdown 文档"
+        elif self.is_pdf:
+            kind = "PDF 批注"
+        else:
+            kind = "手写笔记"
         path = self.path or "（尚未保存到磁盘）"
         return f"{kind}\n{path}"
 
@@ -185,6 +203,8 @@ class DocumentTab:
                 pass
         self.annot_doc = None
         self.note_doc = None
+        self.md_text = ""
+        self.md_headings = []
         self.search_hits = []
         self.outline = []
 

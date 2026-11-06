@@ -106,11 +106,18 @@ class SearchPanel(QWidget):
         if busy:
             self.set_status(f"正在搜索「{query}」…")
 
-    def set_results(self, hits: List[SearchHit], current: int = -1) -> None:
+    def set_results(self, hits: List[SearchHit], current: int = -1,
+                    label=None) -> None:
+        """`label(hit, index)` 可自定义结果文案（Markdown 用「第 N 处」）。
+
+        不传时保持 PDF 的「第 N 页 · 上下文」不变。
+        """
         self._hits = list(hits or [])
         self.list.clear()
         for i, h in enumerate(self._hits):
-            item = QListWidgetItem(f"第 {h.page + 1} 页  ·  {h.context or '(命中)'}")
+            text = (label(h, i) if label else
+                    f"第 {h.page + 1} 页  ·  {h.context or '(命中)'}")
+            item = QListWidgetItem(text)
             item.setData(Qt.UserRole, i)
             item.setToolTip(h.context)
             self.list.addItem(item)
@@ -141,9 +148,9 @@ class SearchPanel(QWidget):
         self.btn_prev.setEnabled(enabled)
         self.btn_next.setEnabled(enabled)
 
-    def reset(self) -> None:
+    def reset(self, status: str = "未打开 PDF") -> None:
         self._hits = []
         self._current = -1
         self.list.clear()
         self._set_nav_enabled(False)
-        self.set_status("未打开 PDF")
+        self.set_status(status)

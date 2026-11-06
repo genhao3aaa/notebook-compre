@@ -5,7 +5,7 @@
 命令行参数（2026-10-01 新增）
 ---------------------------
 - `python main.py` / 双击 exe：正常启动；
-- `python main.py <文件.pdf|文件.note> [...]`：启动后直接把这些文件开成标签
+- `python main.py <文件.pdf|文件.note|文件.md> [...]`：启动后直接把这些文件开成标签
   （与「把文件拖到 exe 上」/ 资源管理器右键打开一致），PDF 仍然会恢复到上次读到的那一页；
 - `--selftest [工作目录]`：打包后的自检（见 src/ui/selftest.py）。
 """
@@ -22,16 +22,17 @@ from src.ui.main_window import MainWindow
 
 
 def _open_paths(window: "MainWindow", paths) -> None:
-    """把命令行里给的文件路径开成标签（一次只开一个，多余的不是本程序格式就忽略）。"""
+    """把命令行里给的文件路径开成标签（不是本程序格式就忽略）。"""
+    from src.core.markdown_document import is_markdown
+
     for raw in paths:
         path = os.path.abspath(raw)
         if not os.path.isfile(path):
             continue
         try:
-            if path.lower().endswith(".pdf"):
-                window.open_pdf(path)
-            elif path.lower().endswith(".note"):
-                window.open_note(path)
+            ext = os.path.splitext(path)[1].lower()
+            if ext in (".pdf", ".note") or is_markdown(path):
+                window.open_path(path)
         except Exception:                    # 单个文件打不开不该拦住启动
             continue
 

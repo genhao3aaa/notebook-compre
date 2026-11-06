@@ -408,27 +408,125 @@ class AppSettings:
                           policy if policy in ("quiet", "off", "system") else "quiet")
 
     # ------------------------------------------------------------------ #
-    # 最近文件
+    # 最近文件（置顶 + 打开时间；兼容旧的「纯路径列表」）
     # ------------------------------------------------------------------ #
+    def _recent_entries(self) -> List[dict]:
+        """读回并归一化：历史数据是 [str]，新数据是 [{path, pinned, ts}]。
+
+        存成 JSON 字符串而不是直接存 list[dict]：QSettings 的 INI 后端对
+        「列表里套字典」序列化不可靠，而本项目在注册表写不进去时会落到 INI
+        （见模块文档）。旧数据第一次读进来后，下一次写入就自动迁移成新格式。
+        """
+        v = self._qs.value("recent", None)
+        if isinstance(v, str):
+            try:
+                items = json.loads(v)
+            except Exception:
+                items = []
+        elif isinstance(v, (list, tuple)):
+            items = list(v)
+        else:
+            items = []
+        if not isinstance(items, list):
+            items = []
+        out: List[dict] = []
+        seen = set()
+        for item in items:
+            if isinstance(item, dict):
+                p = str(item.get("path") or "")
+                pinned = bool(item.get("pinned", False))
+                try:
+                    ts = float(item.get("ts", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    ts = 0.0
+            elif isinstance(item, str):
+                p, pinned, ts = item, False, 0.0
+            else:
+                continue
+            if not p:
+                continue
+            key = _norm(p)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"path": p, "pinned": pinned, "ts": ts})
+        return out
+
+    @staticmethod
+    def _sort_entries(entries: List[dict]) -> List[dict]:
+        """置顶优先；组内保持「最近在前」的原有顺序。
+
+        不按时间戳排序：连续打开两个文件时 `time.time()` 会落进同一毫秒，
+        写盘时一旦 round 就并列，反而把顺序弄反（旧行为是最新打开的排最前）。
+        `ts` 只作为「打开时间」用于展示。
+        """
+        return ([e for e in entries if e["pinned"]] +
+                [e for e in entries if not e["pinned"]])
+
+    def _write_entries(self, entries: List[dict]) -> None:
+        # 置顶项不占「最近 N 条」的额度，避免收藏被新开的文件挤出列表
+        pinned = [e for e in entries if e["pinned"]]
+        normal = [e for e in entries if not e["pinned"]][:MAX_RECENT]
+        data = self._sort_entries(pinned + normal)
+        self._qs.setValue("recent", json.dumps(
+            [{"path": e["path"], "pinned": bool(e["pinned"]),
+              "ts": float(e["ts"])} for e in data], ensure_ascii=False))
+
     def recent_files(self) -> List[str]:
-        v = self._qs.value("recent", [], type=list)
-        return [str(p) for p in v]
+        """路径列表（置顶在前、其余按打开时间倒序）——兼容旧调用方。"""
+        return [e["path"] for e in self.recent_entries()]
+
+    def recent_entries(self) -> List[dict]:
+        """带元数据的条目 [{path, pinned, ts}]，供「最近文件」界面分组/图标用。"""
+        return self._sort_entries(self._recent_entries())
 
     def add_recent(self, path: str) -> List[str]:
-        files = self.recent_files()
-        if path in files:
-            files.remove(path)
-        files.insert(0, path)
-        files = files[:MAX_RECENT]
-        self._qs.setValue("recent", files)
-        return files
+        key = _norm(path)
+        now = time.time()
+        others: List[dict] = []
+        hit: Optional[dict] = None
+        for e in self._recent_entries():
+            if _norm(e["path"]) == key:
+                hit = {"path": path, "pinned": e["pinned"], "ts": now}
+            else:
+                others.append(e)
+        if hit is None:
+            hit = {"path": path, "pinned": False, "ts": now}
+        others.insert(0, hit)        # 最新打开的排最前（置顶分组在写盘时完成）
+        self._write_entries(others)
+        return self.recent_files()
 
     def remove_recent(self, path: str) -> List[str]:
-        files = self.recent_files()
-        if path in files:
-            files.remove(path)
-            self._qs.setValue("recent", files)
-        return files
+        key = _norm(path)
+        entries = [e for e in self._recent_entries() if _norm(e["path"]) != key]
+        self._write_entries(entries)
+        return self.recent_files()
+
+    def pin_recent(self, path: str, pinned: bool = True) -> List[str]:
+        """置顶 / 取消置顶（置顶项不会被数量上限挤出）。"""
+        key = _norm(path)
+        out: List[dict] = []
+        changed = False
+        for e in self._recent_entries():
+            if _norm(e["path"]) == key:
+                out.append({"path": e["path"], "pinned": bool(pinned), "ts": e["ts"]})
+                changed = True
+            else:
+                out.append(e)
+        if changed:
+            self._write_entries(out)
+        return self.recent_files()
+
+    def clear_recent(self) -> None:
+        """清空全部最近文件（含置顶项）。"""
+        self._qs.remove("recent")
+
+    def prune_recent(self) -> List[str]:
+        """清理磁盘上已不存在的条目；置顶项保留，避免误删用户收藏。"""
+        entries = [e for e in self._recent_entries()
+                   if e["pinned"] or os.path.isfile(e["path"])]
+        self._write_entries(entries)
+        return self.recent_files()
 
     # ------------------------------------------------------------------ #
     # PDF 阅读状态（连续/单页模式 + 上次读到第几页）
@@ -508,6 +606,24 @@ class AppSettings:
         self._set_json_map("note_read_state", data, MAX_PDF_STATE)
 
     # ------------------------------------------------------------------ #
+    # Markdown 阅读位置（整篇滚动比例 0~1）
+    # ------------------------------------------------------------------ #
+    def md_read_state(self, path: str) -> float:
+        """某份 Markdown 上次读到的滚动比例；没有记录返回 0（顶部）。"""
+        data = self._json_map("md_read_state")
+        try:
+            return max(0.0, min(1.0, float(data.get(_doc_key(path), 0.0))))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def set_md_read_state(self, path: str, frac: float) -> None:
+        key = _doc_key(path)
+        data = self._json_map("md_read_state")
+        data.pop(key, None)          # 先删再插，保证 LRU 顺序
+        data[key] = round(max(0.0, min(1.0, float(frac))), 4)
+        self._set_json_map("md_read_state", data, MAX_PDF_STATE)
+
+    # ------------------------------------------------------------------ #
     # 会话：上次退出时打开的标签（[{kind, path}, ...]）
     # ------------------------------------------------------------------ #
     def open_tabs(self) -> list:
@@ -526,7 +642,7 @@ class AppSettings:
         for item in data:
             if isinstance(item, dict) and isinstance(item.get("path"), str):
                 kind = item.get("kind")
-                out.append({"kind": kind if kind in ("note", "pdf") else "note",
+                out.append({"kind": kind if kind in ("note", "pdf", "md") else "note",
                             "path": item["path"]})
         return out
 

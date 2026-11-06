@@ -90,9 +90,14 @@ class UiThemeMixin:
         self._refresh_icons()
         # 主题作用于「所有」标签的画布，而不只是当前那一个
         for t in self._tabs:
-            if t.canvas is not None:
+            if t.canvas is None:
+                continue
+            if t.is_md:
+                # 富文本要按主题重设默认样式表并重渲染（内部会保留滚动位置）
+                t.canvas.apply_theme(self.theme.colors())
+            else:
                 t.canvas.set_canvas_bg(self.theme.canvas_bg())
-                t.canvas.update()
+            t.canvas.update()
         self._refresh_tab_icons()
         self.settings.set_theme(self.theme.theme)
     def _refresh_icons(self) -> None:

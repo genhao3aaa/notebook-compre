@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import time
 from typing import Dict, List, Optional, Tuple
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import (QAction, QActionGroup, QColor, QCursor,
-                           QGuiApplication, QKeySequence, QShortcut)
+                           QGuiApplication, QIcon, QKeySequence, QShortcut)
 from PySide6.QtWidgets import (QApplication, QColorDialog, QComboBox, QFileDialog,
                                QHBoxLayout, QInputDialog, QLabel, QListWidget,
                                QListWidgetItem, QMainWindow, QMenu, QMessageBox,
@@ -19,7 +21,9 @@ from PySide6.QtWidgets import (QApplication, QColorDialog, QComboBox, QFileDialo
 from src.core.annot_document import AnnotDocument
 from src.core import annot_store
 from src.core import serializer
-from src.core.document_tab import DocumentTab, NOTE, PDF, same_path
+from src.core.document_tab import DocumentTab, NOTE, PDF, MD, same_path
+from src.core.markdown_document import (MD_SUFFIXES, is_markdown,
+                                        parse_headings, read_markdown)
 from src.core.hn_log import get_logger, log_debug, log_warning
 from src.core.note_document import (BACKGROUND_TYPES, BG_BLANK, BG_COLOR_PRESETS,
                                     BG_LABELS, NoteDocument)
@@ -27,13 +31,74 @@ from src.render.pdf_engine import PdfEngine, PdfSearchWorker, export_note_to_pdf
 
 _log = get_logger("ui.file_ops")
 
-
+_MD_GLOB = " ".join("*" + s for s in MD_SUFFIXES)
+#: 阅读器支持的所有格式集中在这里，新增格式只改这一处
+MD_FILES_FILTER = f"Markdown 文件 ({_MD_GLOB});;所有文件 (*)"
+ALL_FILES_FILTER = (
+    f"支持的文件 (*.note *.pdf {_MD_GLOB});;"
+    f"手写笔记 (*.note);;PDF 文件 (*.pdf);;"
+    f"Markdown 文件 ({_MD_GLOB});;所有文件 (*)")
 
 
 class FileOpsMixin:
     def new_note(self, background: str = BG_BLANK) -> DocumentTab:
         """旧「新建笔记」入口：多标签下等价于新建一个笔记标签。"""
         return self.new_tab_note(background)
+
+    # ------------------------------------------------------------------ #
+    # 阅读器支持格式的统一分发
+    # ------------------------------------------------------------------ #
+    def open_path(self, path: str, activate: bool = True) -> Optional[DocumentTab]:
+        """按后缀分发到对应打开入口：新增阅读格式只改这一处 + 一个 open_*。
+
+        最近文件、会话恢复、重开标签、命令行参数都走这里，避免后缀判断散落各处。
+        """
+        p = os.path.abspath(path)
+        if p.lower().endswith(".pdf"):
+            return self.open_pdf(p, activate=activate)
+        if is_markdown(p):
+            return self.open_markdown(p, activate=activate)
+        return self.open_note(p, activate=activate)
+
+    def open_markdown(self, path: str, activate: bool = True) -> Optional[DocumentTab]:
+        """打开 Markdown：只读渲染成标签；已打开过就切过去。"""
+        path = os.path.abspath(path)
+        existing = self._find_tab_by_path(path)
+        if existing is not None:
+            if activate:
+                self._switch_to_tab(existing)
+                self._status(f"已在标签中打开：{existing.display_name()}", 2500)
+            return existing
+        if not os.path.exists(path):
+            QMessageBox.critical(self, "打开失败", f"找不到文件：\n{path}")
+            return None
+        try:
+            text = read_markdown(path)
+        except Exception as e:
+            QMessageBox.critical(self, "打开失败", f"无法读取 Markdown 文件：\n{e}")
+            return None
+
+        view = self._make_markdown_view()
+        tab = DocumentTab(MD, view, os.path.basename(path))
+        tab.path = path
+        tab.md_text = text
+        tab.md_headings = parse_headings(text)
+        view.set_markdown(text, path)          # 先装载，_add_tab 同步界面时才有内容
+        self._add_tab(tab, activate=activate)
+        self._refresh_tab_title(tab)
+        frac = self.settings.md_read_state(path)
+        if frac > 0:
+            view.restore_scroll_frac(frac)
+        self._add_recent(path)
+        self.settings.set_last_dir(os.path.dirname(path))
+        if activate:
+            view.setFocus()
+            self._update_window_title()
+            self._status(
+                f"已打开：{os.path.basename(path)}"
+                f"（Markdown，{len(tab.md_headings)} 个标题）", 4000)
+        return tab
+
     def open_note(self, path: str, activate: bool = True) -> Optional[DocumentTab]:
         """打开笔记：已打开过就切过去，否则在新标签里打开。"""
         path = os.path.abspath(path)
@@ -252,6 +317,17 @@ class FileOpsMixin:
                                               "PDF 文件 (*.pdf)")
         if path:
             self.open_pdf(path)
+    def _open_markdown_dialog(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "打开 Markdown", self.settings.last_dir(), MD_FILES_FILTER)
+        if path:
+            self.open_markdown(path)
+    def _open_any_dialog(self) -> None:
+        """统一的「打开文件…」：一个对话框覆盖阅读器支持的所有格式。"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "打开文件", self.settings.last_dir(), ALL_FILES_FILTER)
+        if path:
+            self.open_path(path)
     def _dispatch_save(self, tab, path: str, kind: str, on_ok=None) -> None:
         """调度一次保存（A4）：快照在这里拍，编码 + 写盘可能落在后台线程。"""
         if kind == "note":
@@ -337,6 +413,9 @@ class FileOpsMixin:
         tab = self._active
         if tab is None:
             return
+        if tab.is_md:
+            self._status("Markdown 为只读文档，无需保存", 3000)
+            return
         try:
             if tab.is_note:
                 if tab.note_doc is None:
@@ -375,7 +454,12 @@ class FileOpsMixin:
             QMessageBox.critical(self, "保存失败", f"保存出错：\n{e}")
     def save_as(self) -> None:
         tab = self._active
-        if tab is None or not tab.is_note:
+        if tab is None:
+            return
+        if tab.is_md:
+            self._status("Markdown 为只读文档，不能另存为", 3000)
+            return
+        if not tab.is_note:
             self._status("PDF 批注默认保存到 PDF 同名的 .annot 文件（Ctrl+S）", 4000)
             return
         path, _ = QFileDialog.getSaveFileName(self, "另存为",
@@ -398,6 +482,9 @@ class FileOpsMixin:
     def export_pdf(self) -> None:
         tab = self._active
         if tab is None:
+            return
+        if tab.is_md:
+            self._status("Markdown 文档暂不支持导出 PDF（可复制文本）", 4000)
             return
         if tab.is_note:
             if tab.note_doc is None:
@@ -433,6 +520,16 @@ class FileOpsMixin:
         tab = self._active
         if tab is None:
             return
+        if tab.is_md:
+            text = tab.md_text
+            QMessageBox.information(
+                self, "文档信息",
+                f"文件：{os.path.basename(tab.path or '')}\n"
+                f"类型：Markdown 文档（只读）\n"
+                f"字符数：{len(text)}\n"
+                f"行数：{len(text.splitlines())}\n"
+                f"标题：{len(tab.md_headings)}")
+            return
         if not tab.is_pdf or tab.pdf_engine is None:
             doc = tab.note_doc
             info = ("当前标签不是 PDF。\n笔记文档：\n"
@@ -461,7 +558,18 @@ class FileOpsMixin:
             f"大小：{size_txt}")
     def _copy_page_text(self) -> None:
         tab = self._active
-        if tab is None or not tab.is_pdf or tab.pdf_engine is None:
+        if tab is None:
+            return
+        if tab.is_md:
+            view = tab.canvas
+            text = ""
+            if view is not None and hasattr(view, "textCursor"):
+                text = view.textCursor().selectedText() or ""
+            text = text or tab.md_text
+            QApplication.clipboard().setText(text)
+            self._status(f"已复制 Markdown 文本（{len(text)} 字）", 3500)
+            return
+        if not tab.is_pdf or tab.pdf_engine is None:
             self._status("复制页面文本需要打开 PDF", 3000)
             return
         text = tab.pdf_engine.page_text(tab.page)
@@ -470,30 +578,135 @@ class FileOpsMixin:
             return
         QApplication.clipboard().setText(text)
         self._status(f"已复制第 {tab.page + 1} 页文本（{len(text)} 字）", 3500)
+    # ------------------------------------------------------------------ #
+    # 最近文件管理（置顶 / 分组 / 图标 / 右键 / 过滤 / 清理）
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _recent_kind(path: str) -> str:
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".pdf":
+            return "pdf"
+        if is_markdown(path):
+            return "md"
+        return "note"
+
+    def _recent_icon(self, path: str) -> QIcon:
+        name = {"pdf": "tab_pdf", "md": "tab_md", "note": "tab_note"}[
+            self._recent_kind(path)]
+        return self.theme.icon(name, 16)
+
     def _add_recent(self, path: str) -> None:
         self.recent_files = self.settings.add_recent(path)
         self._build_recent_menu()
+
+    def _refresh_recent(self) -> None:
+        """给外部（测试 / 其它控制器）用的显式刷新入口。"""
+        self._build_recent_menu()
+
     def _build_recent_menu(self) -> None:
-        self.recent_menu.clear()
-        self.recent_list.clear()
-        if not self.recent_files:
+        """「文件 → 最近文件」与侧栏列表一起刷新，保证两处永远一致。"""
+        menu = self.recent_menu
+        menu.clear()
+        entries = self.settings.recent_entries()
+        if not entries:
             act = QAction("(无)", self)
             act.setEnabled(False)
-            self.recent_menu.addAction(act)
-            return
-        for path in self.recent_files:
-            act = QAction(os.path.basename(path), self)
-            act.setToolTip(path)
-            act.triggered.connect(lambda checked=False, p=path: self._open_recent(p))
-            self.recent_menu.addAction(act)
-            item = QListWidgetItem(os.path.basename(path))
-            item.setToolTip(path)
-            item.setData(Qt.UserRole, path)
-            self.recent_list.addItem(item)
+            menu.addAction(act)
+        else:
+            pinned = [e for e in entries if e["pinned"]]
+            normal = [e for e in entries if not e["pinned"]]
+            if pinned:
+                self._recent_group_title(menu, "★ 置顶")
+                for e in pinned:
+                    self._add_recent_action(menu, e)
+            if normal:
+                if pinned:
+                    self._recent_group_title(menu, "最近打开")
+                for e in normal:
+                    self._add_recent_action(menu, e)
+        menu.addSeparator()
+        act_prune = QAction("清理失效项", self)
+        act_prune.triggered.connect(self._prune_recent_files)
+        menu.addAction(act_prune)
+        act_clear = QAction("清空最近文件", self)
+        act_clear.triggered.connect(self._clear_recent_files)
+        menu.addAction(act_clear)
+        self._build_recent_list()
+
+    @staticmethod
+    def _recent_group_title(menu: QMenu, text: str) -> None:
+        act = QAction(text, menu)
+        act.setEnabled(False)
+        menu.addAction(act)
+
+    def _add_recent_action(self, menu: QMenu, entry: dict) -> None:
+        path = entry["path"]
+        name = ("★ " if entry["pinned"] else "") + os.path.basename(path)
+        exists = os.path.exists(path)
+        act = QAction(name, self)
+        act.setIcon(self._recent_icon(path))
+        act.setToolTip(path + ("" if exists else "\n（文件已不存在）"))
+        act.setEnabled(exists)
+        act.triggered.connect(lambda checked=False, p=path: self._open_recent(p))
+        menu.addAction(act)
+
+    def _build_recent_list(self) -> None:
+        self.recent_list.clear()
+        query = (self.recent_filter.text().strip().lower()
+                 if getattr(self, "recent_filter", None) is not None else "")
+        entries = self.settings.recent_entries()
+        groups = [([e for e in entries if e["pinned"]], "★ 置顶"),
+                  ([e for e in entries if not e["pinned"]], "最近打开")]
+        visible_groups = []
+        for group, title in groups:
+            visible = [e for e in group if not query or query in e["path"].lower()]
+            if visible:
+                visible_groups.append((visible, title))
+        # 只有两组都有可见条目时才显示分组标题（过滤后只剩一组就别留空标题）
+        grouped = len(visible_groups) > 1
+        shown = 0
+        for visible, title in visible_groups:
+            if grouped:
+                header = QListWidgetItem(title)
+                header.setFlags(Qt.ItemFlag.NoItemFlags)
+                header.setData(Qt.UserRole, None)
+                self.recent_list.addItem(header)
+            for e in visible:
+                self.recent_list.addItem(self._make_recent_item(e))
+                shown += 1
+        if not shown:
+            empty = QListWidgetItem("(无匹配文件)" if query else "(无)")
+            empty.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.recent_list.addItem(empty)
+
+    def _make_recent_item(self, entry: dict) -> QListWidgetItem:
+        path = entry["path"]
+        exists = os.path.exists(path)
+        name = ("★ " if entry["pinned"] else "") + os.path.basename(path)
+        item = QListWidgetItem(name)
+        item.setData(Qt.UserRole, path)
+        item.setIcon(self._recent_icon(path))
+        label = {"note": "手写笔记", "pdf": "PDF", "md": "Markdown"}[
+            self._recent_kind(path)]
+        tip = f"{label}\n{path}"
+        ts = entry.get("ts") or 0
+        if ts:
+            try:
+                tip += "\n打开于 " + time.strftime("%Y-%m-%d %H:%M",
+                                                  time.localtime(float(ts)))
+            except (TypeError, ValueError, OSError):
+                pass
+        if not exists:
+            tip += "\n（文件已不存在）"
+            item.setForeground(QColor("#9aa0a6"))
+        item.setToolTip(tip)
+        return item
+
     def _on_recent_clicked(self, item: QListWidgetItem) -> None:
         path = item.data(Qt.UserRole)
         if path:
             self._open_recent(path)
+
     def _open_recent(self, path: str) -> None:
         if not os.path.exists(path):
             QMessageBox.warning(self, "文件不存在", f"找不到文件：\n{path}")
@@ -501,7 +714,75 @@ class FileOpsMixin:
             self._build_recent_menu()
             return
         # 多标签后不再需要「先保存当前文档」：直接开到新标签里
-        if path.lower().endswith(".pdf"):
-            self.open_pdf(path)
-        else:
-            self.open_note(path)
+        self.open_path(path)
+
+    def _show_recent_menu(self, pos) -> None:
+        """侧栏右键：打开 / 置顶 / 复制路径 / 定位 / 移除 / 批量清理。"""
+        item = self.recent_list.itemAt(pos)
+        path = item.data(Qt.UserRole) if item is not None else None
+        menu = QMenu(self)
+        act_open = act_pin = act_copy = act_locate = act_remove = None
+        pinned = False
+        if path:
+            entry = next((e for e in self.settings.recent_entries()
+                          if e["path"] == path), None)
+            pinned = bool(entry and entry["pinned"])
+            act_open = menu.addAction("打开")
+            act_pin = menu.addAction("取消置顶" if pinned else "置顶")
+            act_copy = menu.addAction("复制完整路径")
+            act_locate = menu.addAction("在资源管理器中显示")
+            menu.addSeparator()
+            act_remove = menu.addAction("从列表移除")
+            menu.addSeparator()
+        act_prune = menu.addAction("清理失效项")
+        act_clear = menu.addAction("清空全部")
+        chosen = menu.exec(self.recent_list.mapToGlobal(pos))
+        if chosen is None:
+            return
+        if chosen is act_open:
+            self._open_recent(path)
+        elif chosen is act_pin:
+            self.recent_files = self.settings.pin_recent(path, not pinned)
+            self._build_recent_menu()
+        elif chosen is act_copy:
+            QApplication.clipboard().setText(path)
+            self._status("已复制文件路径", 2500)
+        elif chosen is act_locate:
+            self._recent_open_in_explorer(path)
+        elif chosen is act_remove:
+            self.recent_files = self.settings.remove_recent(path)
+            self._build_recent_menu()
+        elif chosen is act_prune:
+            self._prune_recent_files()
+        elif chosen is act_clear:
+            self._clear_recent_files()
+
+    def _on_recent_filter(self, _text: str) -> None:
+        self._build_recent_list()
+
+    @staticmethod
+    def _recent_open_in_explorer(path: str) -> None:
+        """在资源管理器中选中该文件（失败也不影响主流程）。"""
+        try:
+            if os.name == "nt":
+                subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+            elif os.path.isfile(path):
+                subprocess.Popen(["xdg-open", os.path.dirname(os.path.abspath(path))])
+        except Exception:
+            pass
+
+    def _prune_recent_files(self) -> None:
+        before = len(self.settings.recent_files())
+        self.recent_files = self.settings.prune_recent()
+        self._build_recent_menu()
+        self._status(f"已清理 {before - len(self.recent_files)} 个失效文件", 3000)
+
+    def _clear_recent_files(self) -> None:
+        if QMessageBox.question(
+                self, "清空最近文件", "确定要清空所有最近文件（包括置顶项）吗？",
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.settings.clear_recent()
+        self.recent_files = []
+        self._build_recent_menu()
+        self._status("已清空最近文件", 2500)

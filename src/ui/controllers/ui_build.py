@@ -10,7 +10,7 @@ from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import (QAction, QActionGroup, QColor, QCursor,
                            QGuiApplication, QKeySequence, QShortcut)
 from PySide6.QtWidgets import (QApplication, QColorDialog, QComboBox, QFileDialog,
-                               QHBoxLayout, QInputDialog, QLabel, QListWidget,
+                               QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMenu, QMessageBox,
                                QPushButton, QSlider, QSpinBox, QSplitter, QStatusBar,
                                QTabBar, QTabWidget, QToolButton, QVBoxLayout,
@@ -140,10 +140,28 @@ class UiBuildMixin:
         recent_label = QLabel("最近文件")
         recent_label.setObjectName("SideTitle")
         layout.addWidget(recent_label)
+        self.recent_filter = QLineEdit()
+        self.recent_filter.setPlaceholderText("筛选文件名或路径…")
+        self.recent_filter.setClearButtonEnabled(True)
+        self.recent_filter.textChanged.connect(self._on_recent_filter)
+        layout.addWidget(self.recent_filter)
         self.recent_list = QListWidget()
-        self.recent_list.setMaximumHeight(150)
+        self.recent_list.setMaximumHeight(180)
         self.recent_list.itemClicked.connect(self._on_recent_clicked)
+        self.recent_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.recent_list.customContextMenuRequested.connect(self._show_recent_menu)
         layout.addWidget(self.recent_list)
+        recent_ops = QHBoxLayout()
+        recent_ops.setSpacing(6)
+        self.btn_recent_prune = QPushButton("清理失效")
+        self.btn_recent_prune.setToolTip("移除磁盘上已不存在的文件")
+        self.btn_recent_prune.clicked.connect(self._prune_recent_files)
+        self.btn_recent_clear = QPushButton("清空全部")
+        self.btn_recent_clear.setToolTip("清空最近文件（含置顶项）")
+        self.btn_recent_clear.clicked.connect(self._clear_recent_files)
+        recent_ops.addWidget(self.btn_recent_prune)
+        recent_ops.addWidget(self.btn_recent_clear)
+        layout.addLayout(recent_ops)
 
         # 页面管理（旧版本重构时丢失，现已补回）
         page_row = QHBoxLayout()
@@ -343,6 +361,11 @@ class UiBuildMixin:
         self.act_new.setShortcut(QKeySequence.New)
         self.act_new.triggered.connect(lambda: self.new_tab_note())
         file_menu.addAction(self.act_new)
+        self.act_open_any = QAction("打开文件…", self)
+        self.act_open_any.setShortcut(QKeySequence("Ctrl+Shift+O"))
+        self.act_open_any.setToolTip("打开阅读器支持的任意格式（笔记 / PDF / Markdown）")
+        self.act_open_any.triggered.connect(self._open_any_dialog)
+        file_menu.addAction(self.act_open_any)
         self.act_open_note = QAction("打开笔记…", self)
         self.act_open_note.setShortcut(QKeySequence.Open)
         self.act_open_note.triggered.connect(self._open_note_dialog)
@@ -350,6 +373,9 @@ class UiBuildMixin:
         self.act_open_pdf = QAction("打开 PDF…", self)
         self.act_open_pdf.triggered.connect(self._open_pdf_dialog)
         file_menu.addAction(self.act_open_pdf)
+        self.act_open_md = QAction("打开 Markdown…", self)
+        self.act_open_md.triggered.connect(self._open_markdown_dialog)
+        file_menu.addAction(self.act_open_md)
         self.act_save = QAction("保存", self)
         self.act_save.setShortcut(QKeySequence.Save)
         self.act_save.triggered.connect(self.save)
@@ -473,6 +499,12 @@ class UiBuildMixin:
         self.act_read_continuous.triggered.connect(
             lambda checked=False: self._set_read_mode("continuous"))
         view_menu.addAction(self.act_read_continuous)
+        view_menu.addSeparator()
+        self.act_md_source = QAction("查看 Markdown 源码", self)
+        self.act_md_source.setCheckable(True)
+        self.act_md_source.setToolTip("在渲染阅读与原始 Markdown 源码之间切换")
+        self.act_md_source.triggered.connect(self._toggle_md_view_mode)
+        view_menu.addAction(self.act_md_source)
         view_menu.addSeparator()
         self.act_theme_menu = QAction("切换主题", self)
         self.act_theme_menu.triggered.connect(self._toggle_theme)

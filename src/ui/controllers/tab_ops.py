@@ -15,9 +15,10 @@ from PySide6.QtWidgets import (QApplication, QColorDialog, QComboBox, QFileDialo
                                QPushButton, QSlider, QSpinBox, QSplitter, QStatusBar,
                                QTabBar, QTabWidget, QToolButton, QVBoxLayout,
                                QWidget)
-from src.core.document_tab import DocumentTab, NOTE, PDF, same_path
+from src.core.document_tab import DocumentTab, NOTE, PDF, MD, same_path
 from src.core.note_document import (BACKGROUND_TYPES, BG_BLANK, BG_COLOR_PRESETS,
                                     BG_LABELS, NoteDocument)
+from src.render.pdf_engine import OutlineEntry
 from src.ui.layout_constants import APP_TITLE, COORD_LABEL_MIN_W, IDLE_CACHE_PAGES, MAX_RESTORED_TABS, SIDEBAR_AUTO_HIDE_W, SIDEBAR_MAX_W, SIDEBAR_MIN_W, WINDOW_MIN_H, WINDOW_MIN_W
 
 
@@ -62,7 +63,7 @@ class TabOpsMixin:
         if getattr(self, "page_spin", None) is None:
             return
         # 文档还没装载完（新建标签的瞬间）就先不刷界面，装载完会再同步一次
-        if tab.note_doc is None and tab.pdf_engine is None:
+        if not tab.is_md and tab.note_doc is None and tab.pdf_engine is None:
             return
         if tab.is_pdf:
             tab.page = canvas.current_index
@@ -72,8 +73,11 @@ class TabOpsMixin:
             canvas.current_index = int(tab.page)
             canvas.total_pages = max(1, tab.page_count())
 
-        if tab.is_note and tab.note_doc is not None:
+        if tab.is_md:
+            self._sync_md_ui(tab)
+        elif tab.is_note and tab.note_doc is not None:
             self.side_title.setText("笔记本")
+            self.side_tabs.setTabEnabled(0, True)
             self.thumbnails.set_note_doc(tab.note_doc)
             self.thumbnails.set_current(tab.page)
             self.side_tabs.setTabEnabled(1, False)
@@ -93,6 +97,7 @@ class TabOpsMixin:
             self._set_bg_swatch(tab.note_doc.background_color)
         else:
             self.side_title.setText("PDF 批注")
+            self.side_tabs.setTabEnabled(0, True)
             self.combo_bg.setEnabled(False)
             self.btn_bg_color.setEnabled(False)
             self.btn_add_page.setEnabled(False)
@@ -126,6 +131,44 @@ class TabOpsMixin:
         # 会话恢复都走这条路，缺了这一手界面会一直停在上一个标签的页码上
         self._sync_page_ui(tab)
         self._update_window_title()
+
+    def _md_outline_entries(self, tab: DocumentTab) -> List[OutlineEntry]:
+        """Markdown 标题 → 目录条目；`top` 借来存「第几个标题」供跳转用。"""
+        return [OutlineEntry(level=h.level, title=h.title, page=0, top=float(i))
+                for i, h in enumerate(tab.md_headings)]
+
+    def _sync_md_ui(self, tab: DocumentTab) -> None:
+        """Markdown 标签：复用「目录」显示标题大纲、「搜索」做全文检索。"""
+        self.side_title.setText("Markdown 阅读")
+        # 富文本没有「页」的概念，缩略图页签让位给目录 / 搜索
+        self.side_tabs.setTabEnabled(0, False)
+        self.side_tabs.setTabEnabled(1, True)
+        self.side_tabs.setTabEnabled(2, True)
+        self.combo_bg.setEnabled(False)
+        self.btn_bg_color.setEnabled(False)
+        self.btn_add_page.setEnabled(False)
+        self.btn_del_page.setEnabled(False)
+        self.btn_search.setEnabled(True)
+        self.btn_undo_tb.setEnabled(False)
+        self.btn_redo_tb.setEnabled(False)
+        self.act_undo.setEnabled(False)
+        self.act_redo.setEnabled(False)
+        if tab.md_headings:
+            self.outline_panel.set_outline(self._md_outline_entries(tab),
+                                           noun="标题", show_page=False)
+        else:
+            self.outline_panel.set_unavailable(
+                "该 Markdown 没有标题\n（用 # 标记标题即可生成目录）")
+        if tab.search_hits:
+            self.search_panel.set_results(
+                tab.search_hits, tab.search_index,
+                label=lambda h, i: f"第 {i + 1} 处  ·  {h.context or '(命中)'}")
+        else:
+            self.search_panel.reset("输入关键字后回车搜索")
+        self.search_panel.set_busy(False)
+        act = getattr(self, "act_md_source", None)
+        if act is not None:
+            act.setChecked(tab.canvas.view_mode() == "source")
     def _remember_view(self, tab: Optional[DocumentTab]) -> None:
         """切走前把「现在看到哪儿」记到标签上（PDF 记滚动比例，笔记记页码）。
 
@@ -133,6 +176,13 @@ class TabOpsMixin:
         都可能让 `fit_to_view()` 重新摆位。标签上这份记忆是「用户真正看到的位置」。
         """
         if tab is None or tab.canvas is None:
+            return
+        if tab.is_md:
+            try:
+                tab.view_page = 0
+                tab.view_frac = float(tab.canvas.scroll_offset_frac())
+            except Exception:            # pragma: no cover - 防御性
+                pass
             return
         if tab.note_doc is None and tab.pdf_engine is None:
             return
@@ -146,7 +196,13 @@ class TabOpsMixin:
             pass
     def _restore_view(self, tab: Optional[DocumentTab]) -> None:
         """切回来时把视图校对回记忆里的位置（没被动过就什么都不做）。"""
-        if tab is None or tab.canvas is None or tab.view_page is None:
+        if tab is None or tab.canvas is None:
+            return
+        if tab.is_md:
+            if tab.view_frac > 0.0:
+                tab.canvas.restore_scroll_frac(tab.view_frac)
+            return
+        if tab.view_page is None:
             return
         canvas = tab.canvas
         page = max(0, min(int(tab.view_page), max(0, tab.page_count() - 1)))
@@ -214,7 +270,8 @@ class TabOpsMixin:
         idx = self.tab_widget.indexOf(tab.canvas) if tab.canvas is not None else -1
         if idx < 0:
             return
-        icon = self.theme.icon("tab_pdf" if tab.is_pdf else "tab_note", 16)
+        icon = self.theme.icon(
+            "tab_md" if tab.is_md else ("tab_pdf" if tab.is_pdf else "tab_note"), 16)
         if not icon.isNull():
             self.tab_widget.setTabIcon(idx, icon)
     def _refresh_tab_icons(self) -> None:
@@ -407,10 +464,7 @@ class TabOpsMixin:
                 continue
             if self._find_tab_by_path(path) is not None:
                 continue
-            if path.lower().endswith(".pdf"):
-                self.open_pdf(path)
-            else:
-                self.open_note(path)
+            self.open_path(path)
             self._status(f"已恢复：{os.path.basename(path)}", 2500)
             return
         self._status("没有可恢复的标签", 2500)
@@ -430,10 +484,7 @@ class TabOpsMixin:
             self._status("文件已不存在（可能被移动或删除）", 3500)
             return
         self.close_tab(tab)
-        if path.lower().endswith(".pdf"):
-            self.open_pdf(path)
-        else:
-            self.open_note(path)
+        self.open_path(path)
         self._status(f"已重新打开：{os.path.basename(path)}", 2500)
     def mark_dirty(self) -> None:
         tab = self._active
